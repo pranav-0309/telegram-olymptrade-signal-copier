@@ -48,6 +48,13 @@ strict = true
 python_version = "3.13"
 exclude = ["src/olymptrade_ws"]
 
+[[tool.mypy.overrides]]
+# Tests use Pydantic private APIs (_env_file), untyped **kwargs helpers, and
+# rely on mypy-not-knowable narrowing (e.g. transition() returning a state the
+# caller then asserts is non-None). Keep src strict; relax tests only.
+module = ["test_config", "test_gale_math", "test_main", "test_parser", "test_state_machine"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
