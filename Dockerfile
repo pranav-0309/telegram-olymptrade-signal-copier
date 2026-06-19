@@ -6,7 +6,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # First layer: copy only what's needed for `uv sync` (cache-friendly)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src/signal_copier/__init__.py ./src/signal_copier/__init__.py
 COPY src/signal_copier/__main__.py ./src/signal_copier/__main__.py
 
@@ -21,4 +21,6 @@ COPY migrations/ ./migrations/
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
 USER app
 
-CMD ["python", "-m", "signal_copier"]
+# Use the venv's Python explicitly. The system Python doesn't have the package
+# installed; the venv created by `uv sync` is at /app/.venv.
+CMD ["/app/.venv/bin/python", "-m", "signal_copier"]

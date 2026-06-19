@@ -13,7 +13,6 @@ tests
 tests/**
 docs
 docs/**
-README.md
 .venv
 .venv.bak
 logs
