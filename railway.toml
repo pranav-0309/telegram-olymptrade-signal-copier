@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+startCommand = "python -m signal_copier"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
