@@ -47,6 +47,10 @@ class Signal:
     source_message_id: int
     source_chat_id: int
     raw_text: str
+    # --- Added in M2 (D-5) ---
+    trigger_unix_initial: float  # epoch for trigger_hhmm on the signal's date in config TZ
+    trigger_unix_gale1: float  # trigger_unix_initial + expiration_seconds
+    trigger_unix_gale2: float  # trigger_unix_initial + 2 * expiration_seconds
 
 
 # --- Failure dataclass + tagged union -------------------------------------
