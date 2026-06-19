@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from signal_copier.domain.signal import (
     FailureReason,
     ParsedSignal,
     ParseFailure,
+    derive_signal_id,
     parse_signal,
 )
 
@@ -219,3 +222,75 @@ def test_header_with_5_minute_expiration_is_accepted_with_allowed_set_including_
     result = parse_signal(msg, allowed_expirations=frozenset({60, 300, 600}))
     assert isinstance(result, ParsedSignal)
     assert result.expiration_seconds == 300
+
+
+# --- Ad-only / non-signal messages ---------------------------------------
+
+
+def test_typical_ad_message_returns_missing_header_failure() -> None:
+    msg = (
+        "🔥 HOT SIGNAL 🔥\n"
+        "Join our VIP channel for exclusive trades!\n"
+        "💎 Limited spots available\n"
+    )
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_HEADER_LINE
+
+
+def test_message_with_only_gale_lines_returns_missing_header_failure() -> None:
+    msg = "🕛TIME UNTIL 10:25\n" "1st GALE -> TIME UNTIL 10:30\n" "2nd GALE - TIME UNTIL 10:35\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_HEADER_LINE
+
+
+def test_empty_message_returns_missing_header_failure() -> None:
+    result = parse_signal("", allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_HEADER_LINE
+
+
+def test_whitespace_only_message_returns_missing_header_failure() -> None:
+    result = parse_signal("   \n\n\t\n", allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_HEADER_LINE
+
+
+# --- ParseFailure echo + signal_id derivation ----------------------------
+
+
+def test_parse_failure_preserves_original_raw_text() -> None:
+    msg = "💰3-minute expiration\nEUR/JPY;10:20;PUT🟥\n"  # 3-min = disallowed
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.raw_text == msg
+
+
+def test_derive_signal_id_is_deterministic_per_day() -> None:
+    parsed = ParsedSignal(
+        pair="EUR/JPY",
+        direction="down",
+        trigger_hhmm="10:20",
+        expiration_seconds=300,
+        gale1_hhmm="10:25",
+        gale2_hhmm="10:30",
+    )
+    sig_id_1 = derive_signal_id(parsed, signal_date=date(2026, 6, 19))
+    sig_id_2 = derive_signal_id(parsed, signal_date=date(2026, 6, 19))
+    assert sig_id_1 == sig_id_2
+    assert len(sig_id_1) == 12  # SHA-1 truncated to 12 hex chars
+
+
+def test_derive_signal_id_differs_across_days() -> None:
+    parsed = ParsedSignal(
+        pair="EUR/JPY",
+        direction="down",
+        trigger_hhmm="10:20",
+        expiration_seconds=300,
+        gale1_hhmm="10:25",
+        gale2_hhmm="10:30",
+    )
+    sig_id_day1 = derive_signal_id(parsed, signal_date=date(2026, 6, 19))
+    sig_id_day2 = derive_signal_id(parsed, signal_date=date(2026, 6, 20))
+    assert sig_id_day1 != sig_id_day2
