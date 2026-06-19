@@ -48,8 +48,9 @@ data/
 *.sqlite3
 *.db
 
-# Third-party broker dependency (see README — clone separately)
-OlympTradeAPI/
+# Upstream source (kept locally as a reference for re-vendoring, see
+# src/olymptrade_ws/VENDORED.md — NOT tracked in this repo)
+/OlympTradeAPI/
 
 # OS
 .DS_Store

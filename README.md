@@ -6,7 +6,7 @@ Personal tool that listens to a Telegram channel for forex trading signals, pars
 
 ## Status
 
-Pre-implementation scaffold. Spec lives in [`docs/PRD.md`](docs/PRD.md) (v0.6) and the original idea in [`docs/tool-idea.md`](docs/tool-idea.md).
+Pre-implementation scaffold. Spec lives in [`docs/PRD.md`](docs/PRD.md) (v0.7) and the original idea in [`docs/tool-idea.md`](docs/tool-idea.md).
 
 ## How it works (TL;DR)
 
@@ -21,27 +21,15 @@ Pre-implementation scaffold. Spec lives in [`docs/PRD.md`](docs/PRD.md) (v0.6) a
 
 Full details: [`docs/PRD.md`](docs/PRD.md).
 
-## ⚠️ Third-party dependency (not vendored)
+## Third-party dependency — vendored
 
-This project uses the **[`OlympTradeAPI`](https://github.com/)** reverse-engineered WebSocket client for broker communication. That library is **not** included in this repo and **not** installed as a Python package — you bring the source yourself and we wire it in as code.
+This project uses a reverse-engineered WebSocket client for the broker (originally by **Chipa, 2025, MIT-licensed**). The `olymptrade_ws/` source is **vendored** at `src/olymptrade_ws/`:
 
-Why excluded:
-- Reverse-engineered protocol — redistribution of a third party's code muddies licensing
-- Per the project decision: "using the code only, not any python package"
+- It is **not** installed as a Python package
+- It is **not** a git submodule
+- It is committed in-tree so deployment is a single `COPY . .` and local patches are obvious
 
-### Setup (local development)
-
-```bash
-# 1. Clone this repo
-git clone https://github.com/<you>/telegram-olymptrade-signal-copier.git
-cd telegram-olymptrade-signal-copier
-
-# 2. Place the OlympTradeAPI source alongside this project
-#    Expected path: ../OlympTradeAPI/olymptrade_ws/
-git clone <OlympTradeAPI-source-url> ../OlympTradeAPI
-```
-
-The exact import path and integration contract will be pinned in `pyproject.toml` and the broker adapter once M0/M8 lands — see the PRD's build plan.
+See [`src/olymptrade_ws/VENDORED.md`](src/olymptrade_ws/VENDORED.md) for the upstream source, license, import contract, and re-vendoring instructions.
 
 ## ⚠️ Risks
 
@@ -51,4 +39,4 @@ The exact import path and integration contract will be pinned in `pyproject.toml
 
 ## License
 
-TBD (project license to be chosen before any public release).
+Project license TBD. The vendored `olymptrade_ws/` retains its original MIT license — see [`src/olymptrade_ws/LICENSE`](src/olymptrade_ws/LICENSE).
