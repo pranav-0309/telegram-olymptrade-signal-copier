@@ -193,3 +193,29 @@ def test_invalid_minute_60_returns_bad_time_failure() -> None:
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParseFailure)
     assert result.reason == FailureReason.BAD_TIME_FORMAT
+
+
+# --- Expiration validation ------------------------------------------------
+
+
+def test_header_with_disallowed_expiration_returns_expiration_not_allowed_failure() -> None:
+    # 3-minute expiration not in {300}
+    msg = "💰3-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.EXPIRATION_NOT_ALLOWED
+
+
+def test_header_with_5_minute_expiration_is_accepted_with_allowed_300() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=frozenset({300}))
+    assert isinstance(result, ParsedSignal)
+    assert result.expiration_seconds == 300
+
+
+def test_header_with_5_minute_expiration_is_accepted_with_allowed_set_including_300() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
+    # Multiple allowed expirations; 5-minute is one of them.
+    result = parse_signal(msg, allowed_expirations=frozenset({60, 300, 600}))
+    assert isinstance(result, ParsedSignal)
+    assert result.expiration_seconds == 300
