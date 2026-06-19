@@ -39,3 +39,51 @@ def test_happy_path_call_returns_parsed_signal_with_up_direction() -> None:
     assert result.expiration_seconds == 300
     assert result.gale1_hhmm == "14:35"
     assert result.gale2_hhmm == "14:40"
+
+
+# --- Whitespace tolerance -------------------------------------------------
+
+
+def test_signal_line_with_trailing_whitespace_still_parses() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥   \n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+
+
+def test_message_with_leading_blank_lines_parses() -> None:
+    msg = "\n\n💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+
+
+def test_message_with_trailing_blank_lines_parses() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n\n\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+
+
+def test_message_with_internal_blank_lines_parses() -> None:
+    msg = "💰5-minute expiration\n" "\n" "EUR/JPY;10:20;PUT🟥\n" "\n" "🕛TIME UNTIL 10:25\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+
+
+# --- BOM tolerance --------------------------------------------------------
+
+
+def test_leading_utf8_bom_is_stripped() -> None:
+    msg = "\ufeff💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+
+
+def test_trailing_utf8_bom_is_stripped() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n\ufeff"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
