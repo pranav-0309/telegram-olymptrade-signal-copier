@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from signal_copier.domain.signal import (
+    FailureReason,
     ParsedSignal,
+    ParseFailure,
     parse_signal,
 )
 
@@ -124,3 +126,70 @@ def test_add_minutes_at_exactly_midnight_returns_zero_hour() -> None:
     assert result.trigger_hhmm == "00:00"
     assert result.gale1_hhmm == "00:05"
     assert result.gale2_hhmm == "00:10"
+
+
+# --- Missing / malformed fields ------------------------------------------
+
+
+def test_missing_header_line_returns_missing_header_failure() -> None:
+    msg = "EUR/JPY;10:20;PUT🟥\n"  # no 💰 header
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_HEADER_LINE
+
+
+def test_missing_signal_line_returns_missing_signal_failure() -> None:
+    msg = "💰5-minute expiration\n🕛TIME UNTIL 10:25\n"  # header but no signal
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_SIGNAL_LINE
+
+
+def test_multiple_signal_lines_returns_multiple_signal_lines_failure() -> None:
+    msg = "💰5-minute expiration\n" "EUR/JPY;10:20;PUT🟥\n" "GBP/USD;11:30;CALL🟩\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MULTIPLE_SIGNAL_LINES
+
+
+def test_message_with_no_semicolon_in_signal_returns_missing_signal_failure() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY 10:20 PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_SIGNAL_LINE
+
+
+def test_message_with_wrong_emoji_direction_returns_missing_signal_failure() -> None:
+    # 🔻 (U+1F53B) instead of 🟥 — regex rejects
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🔻\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_SIGNAL_LINE
+
+
+def test_lowercase_pair_returns_missing_signal_failure() -> None:
+    msg = "💰5-minute expiration\n eur/jpy ;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_SIGNAL_LINE
+
+
+def test_pair_without_slash_returns_missing_signal_failure() -> None:
+    msg = "💰5-minute expiration\nEURJPY;10:20;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.MISSING_SIGNAL_LINE
+
+
+def test_invalid_hour_25_returns_bad_time_failure() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;25:00;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.BAD_TIME_FORMAT
+
+
+def test_invalid_minute_60_returns_bad_time_failure() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:60;PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParseFailure)
+    assert result.reason == FailureReason.BAD_TIME_FORMAT
