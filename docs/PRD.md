@@ -1,11 +1,11 @@
 # PRD — Telegram → OlympTrade Signal Copier
 
-**Status:** Draft v0.6 — all open questions resolved
+**Status:** Draft v0.7 — `olymptrade_ws` is now vendored at `src/olymptrade_ws/` (MIT); see changelog in §18
 **Owner:** Personal tool
-**Target broker:** OlympTrade (via `OlympTradeAPI` reverse-engineered WebSocket client)
+**Target broker:** OlympTrade (via **vendored `olymptrade_ws`** at `src/olymptrade_ws/` — MIT-licensed, originally by Chipa, 2025; reverse-engineered WebSocket client)
 **Target messenger:** Telegram (user account via MTProto, NOT a bot)
 **Target hosting:** Railway.app (persistent container) + Railway PostgreSQL add-on
-**Last update:** Strict time-window enforcement across all 3 stages (FR-3.3, FR-3.6, FR-5.9) — a missed fire time on any stage ends the cascade with `error (signal_expired)`; no retry, no shifting, no skip-to-next-stage.
+**Last update:** v0.7 — `olymptrade_ws` vendored in-tree at `src/olymptrade_ws/` (see §6, §7, §12.6, §18). All import paths, architecture tree, tech-stack table, build-plan M8, and pair-mapping notes updated to reflect the vendored layout. No source code from the vendored package was modified.
 
 ---
 
@@ -67,7 +67,7 @@ Analyst (admin in Telegram group)
                  │ at HH:MM:00
                  ▼
 ┌──────────────────────────────────────────┐
-│ Tool: Trade Executor (OlympTradeAPI)     │
+│ Tool: Trade Executor (vendored olymptrade_ws) │
 │  - place_order(pair, amount, dir, dur)   │
 │  - Persists trade_id                     │
 │  - Updates state machine                 │
@@ -149,7 +149,7 @@ class Signal:
 
 ### 4.4 Trade Executor (Broker Adapter)
 
-**FR-4.1** Connect to OlympTrade using `OlympTradeAPI` (`from olymptrade_ws import OlympTradeClient`).
+**FR-4.1** Connect to OlympTrade using the **vendored** `olymptrade_ws` package at `src/olymptrade_ws/` (`from olymptrade_ws import OlympTradeClient`). The vendored package is byte-identical to the upstream `OlympTradeAPI` source (MIT, Chipa 2025); see §6, §12.6, and `src/olymptrade_ws/VENDORED.md`.
 **FR-4.2** Authenticate using a pre-extracted `access_token` JWT (read from env var or config file). See Open Question Q-2.
 **FR-4.3** Select the **demo** account group only for v1. Config validation must refuse to start if `OLYMP_ACCOUNT_GROUP != "demo"` (hard guardrail — see FR-6.6).
 **FR-4.4** Provide a `Broker` interface so the executor is swappable:
@@ -161,7 +161,7 @@ class Broker(Protocol):
     async def close(self) -> None: ...
 ```
 **FR-4.5** Concrete implementations:
-- `OlympTradeBroker` — wraps the existing `OlympTradeClient` + push event listener.
+- `OlympTradeBroker` — wraps the **vendored** `olymptrade_ws.core.client.OlympTradeClient` (imported as `from olymptrade_ws import OlympTradeClient`) + push event listener. No vendored source is modified; all broker-specific logic lives in `broker/olymp.py`.
 - `DryRunBroker` — logs intended trades, never connects to broker. **Default for v1.**
 **FR-4.6** Translate the signal:
 - `PUT🟥` → `direction="down"`
@@ -273,7 +273,7 @@ All notifications go via **Telegram DM to the bot's own user account** ("Send me
 |---|---|---|
 | Language | **Python 3.13+** | Best Windows monotonic-clock precision; required for sub-second scheduling |
 | Telegram client | **Telethon 1.44.x** | Only actively-maintained MTProto user-account library; Pyrogram is abandoned |
-| Broker | **OlympTradeAPI** (`./OlympTradeAPI/olymptrade_ws`) | Already chosen; reverse-engineered WebSocket client |
+| Broker | **`olymptrade_ws`** (vendored at `src/olymptrade_ws/`, MIT, originally by Chipa 2025) | Reverse-engineered WebSocket client. **Vendored, not installed as a package** — see §12.6 and `src/olymptrade_ws/VENDORED.md`. Imported as `from olymptrade_ws import OlympTradeClient`. |
 | Async runtime | **`asyncio` stdlib** | All deps are asyncio-native; no need for `trio` |
 | Scheduling | **`asyncio.loop.call_at`** | Built-in, monotonic-clock-anchored; **no APScheduler** |
 | Config | **`.env` + `pydantic-settings`** | Type-safe, validated, no surprises |
@@ -312,6 +312,15 @@ signal_copier/
 ├── .dockerignore
 ├── .python-version               # 3.13 pin for Nixpacks fallback
 ├── src/
+│   ├── olymptrade_ws/            # VENDORED — third-party, do not edit (see §12.6)
+│   │   ├── VENDORED.md           # upstream source, license, re-vendoring instructions
+│   │   ├── LICENSE               # MIT, Copyright 2025 Chipa
+│   │   ├── __init__.py           # re-exports OlympTradeClient, BalanceAPI, MarketAPI, TradeAPI
+│   │   ├── main.py
+│   │   ├── api/                  # balance.py, market.py, trade.py, utils.py
+│   │   ├── core/                 # client.py, connection.py, protocol.py
+│   │   ├── logs/                 # upstream's message_logbook.md
+│   │   └── olympconfig/          # parameters.py
 │   └── signal_copier/
 │       ├── __init__.py
 │       ├── __main__.py           # entrypoint: `python -m signal_copier`
@@ -326,7 +335,7 @@ signal_copier/
 │       ├── broker/
 │       │   ├── base.py           # Broker Protocol
 │       │   ├── dry_run.py        # DryRunBroker
-│       │   └── olymp.py          # OlympTradeBroker (wraps OlympTradeAPI)
+│       │   └── olymp.py          # OlympTradeBroker (wraps vendored olymptrade_ws.OlympTradeClient)
 │       ├── scheduler/
 │       │   └── trigger.py        # call_at scheduler, gale cascade
 │       ├── notify/
@@ -348,6 +357,8 @@ signal_copier/
     ├── PRD.md  ← this file
     └── tool-idea.md  ← original idea
 ```
+
+> **`src/olymptrade_ws/` is third-party vendored code.** No file under it may be edited as part of feature work. If a broker-protocol change forces a patch, the modification must be recorded in `src/olymptrade_ws/VENDORED.md` under "Local modifications" (§12.6).
 
 **Concurrency model:** one asyncio loop, one process. Three top-level coroutines started in `__main__.py`:
 1. `telegram_listener()` — runs forever, drains Telethon events into `signals_queue`
@@ -558,7 +569,7 @@ Or use a free-tier Neon / Supabase / ElephantSQL URL — any Postgres 13+ works.
 | Failure | Behavior |
 |---|---|
 | Telegram disconnect | Auto-reconnect with exponential backoff (1s → 30s cap) |
-| OlympTrade WS disconnect | **No auto-reconnect** in `OlympTradeAPI`. We add a wrapper: on disconnect, persist state then exit non-zero so Railway's restart policy brings the container back (see §17). |
+| OlympTrade WS disconnect | **No auto-reconnect** in the vendored `olymptrade_ws` package. We add a wrapper: on disconnect, persist state then exit non-zero so Railway's restart policy brings the container back (see §17). |
 | Token expired | Detect on first `place_order` failure → send Telegram DM + halt |
 | Trade placed but no result within `expiration + 30s` | Mark stage `result='timeout'`, treat as loss, schedule gale |
 | Signal trigger time passed (any stage: initial, gale1, or gale2) | **Cascade ends at the failed stage** (FR-5.9). Mark `status='error'`, `error_reason='signal_expired'`, DM-notify the user. No retry, no shifting to next day, no skipping to next stage. Applies uniformly to all three stages. |
@@ -599,11 +610,35 @@ Or use a free-tier Neon / Supabase / ElephantSQL URL — any Postgres 13+ works.
 - **Credential storage:** Tokens/session strings, `OLYMP_ACCESS_TOKEN`, and `DATABASE_URL` are credentials. Store in `.env` (local) / Railway Variables dashboard (hosted). Never commit. `.gitignore` must include `.env`, `*.session`, `data/`, `logs/`. Consider OS keyring (`keyring` lib) as a v2 enhancement.
 - **No sender-allowlist (R-14):** the channel is admin-only by Telegram platform design — only the analyst can post. The bot is a read-only member. The parser's strict regex (FR-2.2) is the sole defense-in-depth against malformed messages. If the analyst ever invites other posters, the bot will silently ignore non-signal messages and log parse failures — no security boundary is crossed.
 
+### 12.6 Vendored third-party code — `olymptrade_ws`
+
+The broker client is a reverse-engineered WebSocket library written by **Chipa (2025)** and is **vendored in-tree** at `src/olymptrade_ws/`. The vendoring decision is recorded as a project resolution (R-15, see §13.1).
+
+**Licensing:**
+- Upstream license: **MIT** — Copyright (c) 2025 Chipa.
+- MIT permits redistribution and modification provided the copyright notice and license text are preserved.
+- The upstream `LICENSE` file is copied verbatim to `src/olymptrade_ws/LICENSE` and is **never** to be removed or altered.
+
+**Attribution requirements (MIT compliance):**
+- The copyright notice (`Copyright (c) 2025 Chipa`) must remain in `src/olymptrade_ws/LICENSE`.
+- Any distribution of the project (e.g., a Docker image, a public release) must include the LICENSE file in the vendored directory — the Dockerfile must `COPY src/olymptrade_ws/LICENSE` along with the rest of the source (see §17.4).
+- The top-level project `README.md` must reference the vendored license (it currently does; verify on every release).
+
+**Operational rules:**
+- No file under `src/olymptrade_ws/` may be edited as part of normal feature work. The directory layout (`api/`, `core/`, `olympconfig/`, `__init__.py`, `main.py`, `logs/`) is upstream-defined.
+- If a broker-protocol change forces a code patch, the patch must:
+  1. Be recorded in `src/olymptrade_ws/VENDORED.md` under **"Local modifications"** (date, what, why, upstream link if any).
+  2. Be reviewed against the upstream snapshot at `../OlympTradeAPI/` (kept locally, gitignored — see `.gitignore`).
+  3. Be merged into the broker adapter (`signal_copier/broker/olymp.py`) wherever possible, so the vendored layer stays minimal and easy to re-vendor from upstream.
+- Re-vendoring workflow is documented in `src/olymptrade_ws/VENDORED.md`. After re-vendoring, the **"Local modifications"** section must be reviewed and any patches re-applied + re-documented.
+
+**Why vendored instead of a Python package:** see R-15 in §13.1.
+
 ---
 
-## 13. Open Questions (need user input)
+## 13. Open Questions (all resolved — R-1 through R-15)
 
-> Resolved answers are listed first. Two architectural items still need a decision before M0 starts: **Q-5 (pair mapping)** and **Q-11 (hosting)**.
+> Resolved answers are listed first. All architectural decisions resolved through v0.7 (R-1 through R-15). Build can start.
 
 ### 13.1 Resolved (confirmed by user)
 
@@ -621,6 +656,7 @@ Or use a free-tier Neon / Supabase / ElephantSQL URL — any Postgres 13+ works.
 - ✅ **R-12. Hosting** — **Railway.app** persistent container + Railway Postgres add-on. Dockerfile-based deploy (clean control over Python 3.13). Auto-restart on crash via Railway's restart policy. **No Volume needed** — PG state lives in the managed Postgres service, not the container's ephemeral filesystem.
 - ✅ **R-13. Database** — **PostgreSQL** (replaces the earlier JSON-file plan, R-8 v0.3). Rationale: Railway provides a managed Postgres add-on with a free tier, removing the need for a Volume, atomic-write dance, and migration-to-SQLite story. The asyncpg driver is async-native, fast, and dependency-light.
 - ✅ **R-14. Telegram sender verification** — **no allowlist check.** The Telegram channel is admin-only by platform design — only the analyst can post. The bot is a read-only member and cannot post. The parser's strict regex (FR-2.2) is the sole defense-in-depth against malformed messages. The `TELEGRAM_ADMIN_IDS` config field is removed. FR-1.4 updated.
+- ✅ **R-15. Broker client packaging — VENDORED in-tree.** The third-party `olymptrade_ws` package is committed in-tree at `src/olymptrade_ws/` (sibling of `signal_copier/`, not nested inside it). **Not** installed as a PyPI package, **not** a git submodule, **not** a path dependency. **Rationale:** (a) upstream has no `pyproject.toml`/`setup.py` — it's source, not a distributable package; (b) MIT license permits redistribution with attribution, so vendoring is legally clean; (c) the package name is preserved at top level (`olymptrade_ws`), so internal absolute imports inside the vendored code work without modification; (d) in-place patching is required because the reverse-engineered protocol breaks often — vendoring = local patches, no PR round-trip; (e) deployment is a single `COPY . .` in the Dockerfile, no build-time git network calls or submodule init. The vendored LICENSE is preserved at `src/olymptrade_ws/LICENSE`. See §6 (Tech Stack), §7 (Architecture), §12.6 (license compliance), and `src/olymptrade_ws/VENDORED.md`.
 
 ### 13.2 Open questions
 
@@ -635,7 +671,7 @@ Both Q-5 and Q-11 are now resolved (see R-11 and R-12 above). The reasoning that
 
 ### 13.4 Pair Mapping — Q5 (resolved: auto-discover)
 
-**The problem:** your analyst writes `EUR/JPY` (slash notation, ISO-style). The `OlympTradeAPI` library expects **broker-internal pair strings** like `"EURUSD"`, `"USDJPY"`, `"LATAM_X"`, or asset IDs like `"EURUSD-OTC"`. The slash form is never accepted by the broker — the tool has to translate.
+**The problem:** your analyst writes `EUR/JPY` (slash notation, ISO-style). The vendored `olymptrade_ws` library expects **broker-internal pair strings** like `"EURUSD"`, `"USDJPY"`, `"LATAM_X"`, or asset IDs like `"EURUSD-OTC"` (these strings are what `olymptrade_ws.api.market.MarketAPI` returns from the e:1068 push). The slash form is never accepted by the broker — the tool has to translate.
 
 **Resolved approach (a):** auto-discover at startup. `OlympTradeBroker.connect()` first runs `initialize_session()` (which subscribes to the broker's instrument listing), then waits for the e:1068 push that contains the full asset table. Builds a dict keyed by normalized slash-form (`EUR/JPY`, `EURJPY`, `EURJPY-OTC`, all collapse to the same key). On `place_order`, looks up the broker symbol + category from this map.
 
@@ -658,7 +694,7 @@ These are features/enhancements I'd recommend considering but did not include in
 - **S-2. Backtest mode (v2).** Replay a folder of saved Telegram messages through the state machine against historical OlympTrade candle data. Useful for validating the strategy before risking real money.
 - **S-3. Strategy parameters per channel (v2).** Different channels can have different amounts, gale multipliers, daily limits.
 - **S-4. Optional confirmation buttons (v1.1).** Telegram inline-keyboard `[✅ Confirm] [⛔ Skip]` in a self-DM, with 30s timeout. Useful for high-stakes sessions.
-- **S-5. Self-healing reconnect for OlympTrade (v1.0).** The `OlympTradeAPI` library does NOT auto-reconnect on WS drop. Wrap it in a supervisor coroutine that detects drops and reconnects with backoff. Otherwise one network blip kills the tool until restart.
+- **S-5. Self-healing reconnect for OlympTrade (v1.0).** The vendored `olymptrade_ws` library does NOT auto-reconnect on WS drop. Wrap it in a supervisor coroutine that detects drops and reconnects with backoff. Otherwise one network blip kills the tool until restart.
 - **S-6. Token-refresh helper (v1.0).** A small script that opens a Playwright browser, logs into OlympTrade, extracts the JWT, and writes it to `.env`. Saves the manual DevTools step. ~30 minutes of work.
 - **S-7. Tighter schedule precision (v1.0).** Use `time.monotonic_ns()` with a tight spin-loop for the last 50ms before trigger — `asyncio.sleep` can wake up to 15ms early on Windows Python 3.12. Not necessary on 3.13+.
 - **S-8. Sound alerts (v1.1).** Play a `.wav` on WIN/LOSS so you don't need to watch the log.
@@ -684,7 +720,7 @@ These are features/enhancements I'd recommend considering but did not include in
 | **M5** | `telegram/client.py` + `telegram/listener.py` | Connects to Telegram, parses real channel messages, dumps to stdout (no sender-allowlist, R-14) |
 | **M6** | `scheduler/trigger.py` + `__main__.py` glue | On a test signal, fires a (dry-run) trade at HH:MM with ≤500ms skew |
 | **M7** | `notify/telegram_dm.py` (rich notifications per §4.7 FR-7.1) | Self-DM fires for every event in the table; desktop notifications DEFERRED to v2 |
-| **M8** | `broker/olymp.py` — wraps `OlympTradeClient` + registers push callbacks + pair-mapping lookup (auto-discover, R-11) | Demo trade placed; result received via e:26 |
+| **M8** | `broker/olymp.py` — wraps the **vendored** `olymptrade_ws.OlympTradeClient` (`from olymptrade_ws import OlympTradeClient`) + registers push callbacks + pair-mapping lookup (auto-discover, R-11) | Demo trade placed; result received via e:26 |
 | **M9** | End-to-end test: real Telegram channel → dry-run broker cascade | Full pipeline tested with `DRY_RUN=true` for 24h |
 | **M10** | Self-healing reconnect supervisor for OlympTrade WS | Kill network mid-trade; tool reconnects within 30s |
 | **M11** | Railway deployment (Dockerfile, Postgres add-on provisioning, env-var setup, restart policy) + runbook in README | Tool runs unattended on Railway with PG; restart-on-crash works; data survives redeploys |
@@ -725,7 +761,7 @@ Vercel is a **serverless platform**: code runs in short-lived, stateless "Vercel
 | Requirement | Vercel reality |
 |---|---|
 | Persistent WebSocket to Telegram (Telethon MTProto) | ❌ Function execution capped at 10s (Hobby) / 60s (Pro) / 900s (Pro with `maxDuration`). Telethon needs a connection that lives for hours/days. |
-| Persistent WebSocket to OlympTrade (`OlympTradeAPI`) | ❌ Same. Trade result arrives via push event `e:26` seconds-to-minutes later; the function would be torn down before then. |
+| Persistent WebSocket to OlympTrade (vendored `olymptrade_ws`) | ❌ Same. Trade result arrives via push event `e:26` seconds-to-minutes later; the function would be torn down before then. |
 | Continuous event loop | ❌ Vercel functions scale to zero when not invoked. There's no "always-on" event loop. |
 | Sub-second scheduling precision (`loop.call_at` for HH:MM:00) | ❌ Cold starts (100ms–2s) make timing guarantees impossible. |
 | In-memory state between triggers | ❌ Serverless functions are stateless across invocations; you'd need an external DB anyway. |
@@ -782,7 +818,7 @@ Railway.app is a **container platform**: each service runs as a persistent Docke
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Python 3.13 image; copies `src/`, `pyproject.toml`, `migrations/`; runs `pip install` then `python -m signal_copier` |
+| `Dockerfile` | Python 3.13 image; copies `src/`, `pyproject.toml`, `migrations/`; runs `pip install` then `python -m signal_copier`. **Must `COPY src/olymptrade_ws/LICENSE`** with the rest of the source (MIT license compliance — see §12.6). |
 | `railway.toml` | Railway service config: `builder = "DOCKERFILE"`, `restartPolicyType = "ON_FAILURE"`, `restartPolicyMaxRetries = 10` |
 | `.dockerignore` | Excludes `.env`, `.git/`, `tests/`, `__pycache__/`, `logs/` |
 | `.python-version` | Pins Python 3.13.x for Nixpacks fallback (Dockerfile overrides) |
@@ -847,4 +883,34 @@ This is the cost-cheapest easy option. Hetzner at €3.49/mo would be ~$42/yr fl
 
 ---
 
-*End of PRD v0.6 — all decisions resolved; ready to build (M0 scaffold).*
+## 18. Changelog
+
+Significant edits that change the source of truth. Minor copy-edits are not logged.
+
+### v0.7 — `olymptrade_ws` vendored in-tree
+
+- **R-15 (new):** Third-party broker client `olymptrade_ws` is now **vendored** at `src/olymptrade_ws/` instead of being a separate `./OlympTradeAPI/` clone or installed package. MIT-licensed (Chipa, 2025). See §6, §7, §12.6, §13.1 R-15, and `src/olymptrade_ws/VENDORED.md`.
+- **Header (line 5):** "Target broker" updated to reflect vendored layout.
+- **§3 (User Flow):** Trade Executor label updated.
+- **§4.4 FR-4.1:** Import path updated — `from olymptrade_ws import OlympTradeClient` resolves from the vendored `src/olymptrade_ws/`.
+- **§4.4 FR-4.5:** `OlympTradeBroker` description now references the vendored module explicitly and notes that no vendored source is modified.
+- **§6 (Tech Stack):** "Broker" row updated to reflect vendored path + MIT license + VENDORED.md reference.
+- **§7 (Architecture):** Directory tree now includes `src/olymptrade_ws/` with a "do not edit" marker, and a callout below the tree restating the edit rule.
+- **§10 (Error Handling):** "No auto-reconnect" line now references the vendored package.
+- **§12.6 (new):** Full license-compliance and operational rules for the vendored code (attribution, edit prohibition, modification log, re-vendoring workflow).
+- **§13.1 R-15 (new):** Vendoring decision recorded with full rationale.
+- **§13.2 header:** "Two architectural items still need a decision" — line removed (all decisions resolved through R-15).
+- **§13.4 (Pair Mapping Q5):** "OlympTradeAPI library" → "vendored `olymptrade_ws` library"; clarified that broker-internal strings are what `olymptrade_ws.api.market.MarketAPI` returns.
+- **§14 S-5:** "OlympTradeAPI library" → "vendored `olymptrade_ws` library".
+- **§15 M8 (Build Plan):** "wraps `OlympTradeClient`" → "wraps the vendored `olymptrade_ws.OlympTradeClient` (`from olymptrade_ws import OlympTradeClient`)".
+- **§17.1 (Hosting comparison):** "OlympTradeAPI" → "vendored `olymptrade_ws`".
+- **§17.4 (Dockerfile row):** Added requirement to `COPY src/olymptrade_ws/LICENSE` (MIT compliance).
+
+### v0.6 — Strict time-window enforcement
+
+- Strict time-window enforcement across all 3 stages (FR-3.3, FR-3.6, FR-5.9) — a missed fire time on any stage ends the cascade with `error (signal_expired)`; no retry, no shifting, no skip-to-next-stage.
+- (Earlier v0.x history not preserved here — see git log.)
+
+---
+
+*End of PRD v0.7 — all decisions resolved (R-1 through R-15); `olymptrade_ws` vendored; ready to build (M0 scaffold).*
