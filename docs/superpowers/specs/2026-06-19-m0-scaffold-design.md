@@ -160,8 +160,10 @@ WORKDIR /app
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# First layer: copy only what's needed for `uv sync` (cache-friendly)
-COPY pyproject.toml uv.lock ./
+# First layer: copy only what's needed for `uv sync` (cache-friendly).
+# README.md is required because pyproject.toml declares `readme = "README.md"`
+# and hatchling validates the readme at build time.
+COPY pyproject.toml uv.lock README.md ./
 COPY src/signal_copier/__init__.py ./src/signal_copier/__init__.py
 COPY src/signal_copier/__main__.py ./src/signal_copier/__main__.py
 
@@ -176,13 +178,17 @@ COPY migrations/ ./migrations/
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
 USER app
 
-CMD ["python", "-m", "signal_copier"]
+# Use the venv's Python explicitly. The system Python doesn't have the package
+# installed; the venv created by `uv sync` is at /app/.venv.
+CMD ["/app/.venv/bin/python", "-m", "signal_copier"]
 ```
 
 **Notes:**
 - `--frozen` refuses to modify `uv.lock` during build — fails the build if the lockfile is out of sync with `pyproject.toml`. Catches the "I forgot to run `uv lock`" mistake at deploy time.
 - `--no-dev` skips dev deps (pytest, ruff, mypy, pre-commit) in the container — smaller image, faster deploys.
 - `__main__.py` is included in the first `COPY` step (alongside `__init__.py`) because Hatchling requires at least one non-`__init__.py` Python file in a package to build a wheel. Without it, the install step fails.
+- `README.md` is included in the first `COPY` step (alongside `pyproject.toml` and `uv.lock`) because `pyproject.toml` declares `readme = "README.md"` and hatchling validates the readme at build time. Without it, `uv sync` fails with `OSError: Readme file does not exist: README.md`.
+- The CMD uses the venv's Python (`/app/.venv/bin/python`) explicitly. The system Python doesn't have `signal_copier` installed — it's in the venv. Without this, the container exits with `No module named signal_copier`.
 - No `LICENSE` file is `COPY`-ed (D-2: proprietary, no LICENSE).
 
 ### 4.3 `railway.toml`
@@ -290,7 +296,6 @@ tests
 tests/**
 docs
 docs/**
-README.md
 .venv
 .venv.bak
 logs
@@ -299,6 +304,8 @@ data
 .pre-commit-config.yaml
 .hypothesis
 ```
+
+Note: `README.md` is NOT excluded — it's required by hatchling during the Docker build (see §4.2).
 
 ### 4.9 `.python-version`
 
