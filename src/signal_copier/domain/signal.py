@@ -4,13 +4,13 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 from typing import Final, Literal
 
 # --- Failure reason enum ----------------------------------------------------
 
 
-class FailureReason(str, Enum):
+class FailureReason(StrEnum):
     MISSING_HEADER_LINE = "missing_header_line"
     MISSING_SIGNAL_LINE = "missing_signal_line"
     MULTIPLE_SIGNAL_LINES = "multiple_signal_lines"

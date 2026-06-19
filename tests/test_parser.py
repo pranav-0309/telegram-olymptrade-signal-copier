@@ -37,7 +37,7 @@ def test_happy_path_put_returns_parsed_signal() -> None:
 
 
 def test_happy_path_call_returns_parsed_signal_with_up_direction() -> None:
-    msg = "💰5-minute expiration\n" "GBP/USD;14:30;CALL🟩\n" "🕛TIME UNTIL 14:35\n"
+    msg = "💰5-minute expiration\nGBP/USD;14:30;CALL🟩\n🕛TIME UNTIL 14:35\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParsedSignal)
     assert result.pair == "GBP/USD"
@@ -73,7 +73,7 @@ def test_message_with_trailing_blank_lines_parses() -> None:
 
 
 def test_message_with_internal_blank_lines_parses() -> None:
-    msg = "💰5-minute expiration\n" "\n" "EUR/JPY;10:20;PUT🟥\n" "\n" "🕛TIME UNTIL 10:25\n"
+    msg = "💰5-minute expiration\n\nEUR/JPY;10:20;PUT🟥\n\n🕛TIME UNTIL 10:25\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParsedSignal)
     assert result.pair == "EUR/JPY"
@@ -149,7 +149,7 @@ def test_missing_signal_line_returns_missing_signal_failure() -> None:
 
 
 def test_multiple_signal_lines_returns_multiple_signal_lines_failure() -> None:
-    msg = "💰5-minute expiration\n" "EUR/JPY;10:20;PUT🟥\n" "GBP/USD;11:30;CALL🟩\n"
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\nGBP/USD;11:30;CALL🟩\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParseFailure)
     assert result.reason == FailureReason.MULTIPLE_SIGNAL_LINES
@@ -229,9 +229,7 @@ def test_header_with_5_minute_expiration_is_accepted_with_allowed_set_including_
 
 def test_typical_ad_message_returns_missing_header_failure() -> None:
     msg = (
-        "🔥 HOT SIGNAL 🔥\n"
-        "Join our VIP channel for exclusive trades!\n"
-        "💎 Limited spots available\n"
+        "🔥 HOT SIGNAL 🔥\nJoin our VIP channel for exclusive trades!\n💎 Limited spots available\n"
     )
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParseFailure)
@@ -239,7 +237,7 @@ def test_typical_ad_message_returns_missing_header_failure() -> None:
 
 
 def test_message_with_only_gale_lines_returns_missing_header_failure() -> None:
-    msg = "🕛TIME UNTIL 10:25\n" "1st GALE -> TIME UNTIL 10:30\n" "2nd GALE - TIME UNTIL 10:35\n"
+    msg = "🕛TIME UNTIL 10:25\n1st GALE -> TIME UNTIL 10:30\n2nd GALE - TIME UNTIL 10:35\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParseFailure)
     assert result.reason == FailureReason.MISSING_HEADER_LINE
