@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "Owner" }]
 dependencies = [
-    # Staged: M0 ships zero runtime deps. See PRD §5.
+    "pydantic-settings>=2.6",  # M2: config layer (D-3)
 ]
 
 [project.scripts]
