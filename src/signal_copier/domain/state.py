@@ -305,8 +305,7 @@ def transition(
                 success=False,
                 new_state=None,
                 reason=(
-                    f"invalid_event: FireEvent on placed state ({state.state}); "
-                    "record_result first"
+                    f"invalid_event: FireEvent on placed state ({state.state}); record_result first"
                 ),
             )
         # Pre-fire guard (FR-3.5 / FR-3.6 / FR-5.9): every stage's window matters.
