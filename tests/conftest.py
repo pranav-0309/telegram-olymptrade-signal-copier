@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Generator
 from typing import TYPE_CHECKING
 
+import pytest
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
@@ -29,3 +31,18 @@ async def db(pg_dsn: str) -> AsyncIterator[Database]:
         yield database
     finally:
         await database.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_parse_failures_logger() -> Generator[None, None, None]:
+    """Clear the parse-failures logger's handlers before each test.
+
+    `logging.getLogger()` returns a process-wide singleton, so without
+    this fixture, each test that calls `setup_parse_failures_log` would
+    leave its FileHandler attached to the same logger, and the
+    idempotency test in `tests/test_log.py` would fail on the second
+    call (or, more insidiously, only fail when the test suite is run
+    in a non-isolation order).
+    """
+    logging.getLogger("signal_copier.parse_failures").handlers.clear()
+    yield
