@@ -5,6 +5,7 @@ import logging
 import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
 
 from signal_copier.domain.signal import Signal
+from signal_copier.domain.state import AllStates, ErrorReason
 from signal_copier.infra.db_rows import SignalRow, row_to_signal_row
 
 _log = logging.getLogger(__name__)
@@ -66,3 +67,35 @@ class StateStore:
         if record is None:
             return None
         return row_to_signal_row(record)
+
+    async def update_signal_state(
+        self,
+        signal_id: str,
+        new_state: AllStates,
+        *,
+        error_reason: ErrorReason | None = None,
+        updated_at_unix: float,
+    ) -> None:
+        """Persist a state-machine transition for an existing signal.
+
+        Idempotent: a re-write with the same new_state is a no-op. If
+        signal_id doesn't exist, logs a warning and returns.
+        """
+        sql = """
+            UPDATE signals
+            SET status = $1, error_reason = $2, updated_at_unix = $3
+            WHERE signal_id = $4
+        """
+        async with self._pool.acquire() as conn, conn.transaction():
+            result = await conn.execute(
+                sql,
+                new_state,
+                error_reason,
+                updated_at_unix,
+                signal_id,
+            )
+        if result.endswith(" 0"):
+            _log.warning(
+                "update_signal_state: no row for signal_id=%s (idempotent no-op)",
+                signal_id,
+            )

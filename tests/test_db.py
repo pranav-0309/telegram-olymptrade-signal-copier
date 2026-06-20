@@ -292,3 +292,54 @@ async def test_get_signal_round_trip(db) -> None:
     assert row.error_reason is None
     assert row.expiration_seconds == 300
     assert row.source_message_id == 42
+
+
+async def test_update_signal_state_round_trip(db) -> None:
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    # pending → placed_initial
+    await db.state_store.update_signal_state(
+        signal.signal_id,
+        "placed_initial",
+        updated_at_unix=1.0,
+    )
+    row = await db.state_store.get_signal(signal.signal_id)
+    assert row is not None
+    assert row.status == "placed_initial"
+    assert row.error_reason is None
+    # placed_initial → done_win
+    await db.state_store.update_signal_state(
+        signal.signal_id,
+        "done_win",
+        updated_at_unix=2.0,
+    )
+    row = await db.state_store.get_signal(signal.signal_id)
+    assert row is not None
+    assert row.status == "done_win"
+
+
+async def test_update_signal_state_with_error_reason(db) -> None:
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    await db.state_store.update_signal_state(
+        signal.signal_id,
+        "error",
+        error_reason="signal_expired",
+        updated_at_unix=1.0,
+    )
+    row = await db.state_store.get_signal(signal.signal_id)
+    assert row is not None
+    assert row.status == "error"
+    assert row.error_reason == "signal_expired"
+
+
+async def test_update_signal_state_warns_on_missing_signal_id(db, caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        await db.state_store.update_signal_state(
+            "nonexistent-id",
+            "done_win",
+            updated_at_unix=1.0,
+        )
+    assert any("no row" in r.message for r in caplog.records)
