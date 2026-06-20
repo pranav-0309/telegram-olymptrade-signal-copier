@@ -44,3 +44,15 @@ def test_place_signature_keyword_only_stage_and_amount() -> None:
     sig = inspect.signature(DryRunBroker.place)
     assert sig.parameters["stage"].kind == Parameter.KEYWORD_ONLY
     assert sig.parameters["amount"].kind == Parameter.KEYWORD_ONLY
+
+
+def test_broker_importable_from_top_level() -> None:
+    from signal_copier import Broker as TopLevelBroker
+
+    assert TopLevelBroker is Broker
+
+
+def test_unsupported_pair_error_importable_from_top_level() -> None:
+    from signal_copier import UnsupportedPairError as TopLevel
+
+    assert TopLevel is UnsupportedPairError
