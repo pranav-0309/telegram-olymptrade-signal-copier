@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 
@@ -10,7 +11,12 @@ import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
 from signal_copier.domain.state import AllStates, ErrorReason, StageResult
-from signal_copier.infra.db_rows import SignalRow, row_to_signal_row
+from signal_copier.infra.db_rows import (
+    DailySummaryRow,
+    SignalRow,
+    row_to_daily_summary_row,
+    row_to_signal_row,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -198,3 +204,64 @@ class StateStore:
                 "record_stage_result: no row for trade_id=%s (late push event?)",
                 trade_id,
             )
+
+    async def get_active_signals(self) -> list[SignalRow]:
+        """Fetch all signals currently in placed_* states (restart recovery input)."""
+        sql = """
+            SELECT * FROM signals
+            WHERE status IN ('placed_initial', 'placed_gale1', 'placed_gale2')
+            ORDER BY trigger_ts_unix
+        """
+        async with self._pool.acquire() as conn:
+            records = await conn.fetch(sql)
+        return [row_to_signal_row(r) for r in records]
+
+    async def update_daily_summary(
+        self,
+        on_date: date,
+        *,
+        signals_count_delta: int = 0,
+        trades_count_delta: int = 0,
+        wins_delta: int = 0,
+        losses_delta: int = 0,
+        realized_pnl_delta: Decimal = Decimal("0"),
+        limit_hit: str | None = None,
+    ) -> None:
+        """UPSERT a row in `daily_summary` with additive deltas.
+
+        Passing limit_hit=None leaves the existing value unchanged; passing a
+        string sets/replaces it.
+        """
+        sql = """
+            INSERT INTO daily_summary (
+                date, signals_count, trades_count, wins, losses,
+                realized_pnl, limit_hit
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (date) DO UPDATE SET
+                signals_count = daily_summary.signals_count + EXCLUDED.signals_count,
+                trades_count  = daily_summary.trades_count  + EXCLUDED.trades_count,
+                wins          = daily_summary.wins          + EXCLUDED.wins,
+                losses        = daily_summary.losses        + EXCLUDED.losses,
+                realized_pnl  = daily_summary.realized_pnl  + EXCLUDED.realized_pnl,
+                limit_hit     = COALESCE(EXCLUDED.limit_hit, daily_summary.limit_hit)
+        """
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                sql,
+                on_date,
+                signals_count_delta,
+                trades_count_delta,
+                wins_delta,
+                losses_delta,
+                realized_pnl_delta,
+                limit_hit,
+            )
+
+    async def get_daily_summary(self, on_date: date) -> DailySummaryRow | None:
+        """Fetch one daily summary by date. None if no row yet (clean day)."""
+        sql = "SELECT * FROM daily_summary WHERE date = $1"
+        async with self._pool.acquire() as conn:
+            record = await conn.fetchrow(sql, on_date)
+        if record is None:
+            return None
+        return row_to_daily_summary_row(record)

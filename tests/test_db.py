@@ -473,3 +473,73 @@ async def test_record_stage_result_warns_on_missing_trade_id(db, caplog) -> None
             closed_at_unix=400.0,
         )
     assert any("no row" in r.message for r in caplog.records)
+
+
+async def test_get_active_signals_excludes_terminal_states(db) -> None:
+    for status in ("placed_initial", "done_win", "error"):
+        sig = _make_signal(trigger_hhmm=status)
+        await db.state_store.upsert_signal(sig)
+        await db.state_store.update_signal_state(
+            sig.signal_id,
+            status,  # type: ignore[arg-type]
+            error_reason="signal_expired" if status == "error" else None,
+            updated_at_unix=1.0,
+        )
+    active = await db.state_store.get_active_signals()
+    assert len(active) == 1
+    assert active[0].status == "placed_initial"
+
+
+async def test_update_daily_summary_inserts_new_row(db) -> None:
+    today = _date.today()
+    await db.state_store.update_daily_summary(
+        today,
+        signals_count_delta=1,
+        trades_count_delta=2,
+        wins_delta=1,
+        losses_delta=1,
+        realized_pnl_delta=_D("1.84"),
+    )
+    row = await db.state_store.get_daily_summary(today)
+    assert row is not None
+    assert row.signals_count == 1
+    assert row.trades_count == 2
+    assert row.wins == 1
+    assert row.losses == 1
+    assert row.realized_pnl == _D("1.84")
+    assert row.limit_hit is None
+
+
+async def test_update_daily_summary_adds_deltas(db) -> None:
+    today = _date.today()
+    await db.state_store.update_daily_summary(today, wins_delta=1)
+    await db.state_store.update_daily_summary(today, wins_delta=1)
+    row = await db.state_store.get_daily_summary(today)
+    assert row is not None
+    assert row.wins == 2
+
+
+async def test_update_daily_summary_preserves_limit_hit(db) -> None:
+    today = _date.today()
+    await db.state_store.update_daily_summary(today, limit_hit="loss")
+    await db.state_store.update_daily_summary(today, wins_delta=1)
+    row = await db.state_store.get_daily_summary(today)
+    assert row is not None
+    assert row.limit_hit == "loss"
+    assert row.wins == 1
+
+
+async def test_update_daily_summary_concurrent(db) -> None:
+    import asyncio
+
+    today = _date.today()
+    await asyncio.gather(
+        *[db.state_store.update_daily_summary(today, signals_count_delta=1) for _ in range(10)]
+    )
+    row = await db.state_store.get_daily_summary(today)
+    assert row is not None
+    assert row.signals_count == 10
+
+
+async def test_get_daily_summary_returns_none_for_missing(db) -> None:
+    assert await db.state_store.get_daily_summary(_date(2020, 1, 1)) is None
