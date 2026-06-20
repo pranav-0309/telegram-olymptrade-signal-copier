@@ -148,3 +148,35 @@ async def test_wait_result_provider_receives_signal_and_stage() -> None:
     assert len(captured) == 1
     assert captured[0][0] is sig
     assert captured[0][1] == "gale1"
+
+
+async def test_place_then_wait_pops_trade_id_dict() -> None:
+    broker = DryRunBroker()
+    sig = _signal()
+    tid = await broker.place(
+        sig,
+        stage="initial",
+        amount=Decimal("2.00"),
+    )
+    assert tid in broker._placed
+    await broker.wait_result(tid, timeout=330.0)
+    assert tid not in broker._placed
+
+
+async def test_multiple_in_flight_places_do_not_collide() -> None:
+    broker = DryRunBroker()
+    sig = _signal()
+    tid1 = await broker.place(
+        sig,
+        stage="initial",
+        amount=Decimal("2.00"),
+    )
+    tid2 = await broker.place(
+        sig,
+        stage="gale1",
+        amount=Decimal("4.00"),
+    )
+    assert tid1 != tid2
+    assert await broker.wait_result(tid1, timeout=330.0) == "win"
+    assert await broker.wait_result(tid2, timeout=330.0) == "win"
+    assert broker._placed == {}  # both popped
