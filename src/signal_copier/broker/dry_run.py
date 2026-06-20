@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import ClassVar
+from uuid import uuid4
 
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
@@ -63,9 +64,18 @@ class DryRunBroker:
         stage: Stage,
         amount: Decimal,
     ) -> str:
-        # Implementation lands in Task 4.
-        _ = signal, stage, amount
-        return ""
+        trade_id = f"{self._PREFIX}-{signal.signal_id}-{stage}-{uuid4().hex[:8]}"
+        self._placed[trade_id] = (signal, stage)
+        _log.info(
+            "DRY-RUN place: pair=%s direction=%s stage=%s amount=%s signal_id=%s trade_id=%s",
+            signal.pair,
+            signal.direction,
+            stage,
+            amount,
+            signal.signal_id,
+            trade_id,
+        )
+        return trade_id
 
     async def wait_result(
         self,
