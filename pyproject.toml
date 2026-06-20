@@ -30,6 +30,7 @@ dev-dependencies = [
     "ruff>=0.7",
     "mypy>=1.13",
     "pre-commit>=4.0",
+    "testcontainers[postgresql]>=4.8",  # M4: spin up real PG per test session
 ]
 
 [tool.ruff]
