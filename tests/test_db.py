@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import date
 from decimal import Decimal
 from typing import Any
+
+import asyncpg
+import asyncpg.exceptions
 
 from signal_copier.infra.db_rows import (
     DailySummaryRow,
@@ -543,3 +548,38 @@ async def test_update_daily_summary_concurrent(db) -> None:
 
 async def test_get_daily_summary_returns_none_for_missing(db) -> None:
     assert await db.state_store.get_daily_summary(_date(2020, 1, 1)) is None
+
+
+async def test_command_timeout_aborts_long_query(db) -> None:
+    # Use a fresh connection with a tight statement_timeout. SET LOCAL only
+    # takes effect within a transaction, so we open one explicitly.
+    async with db.pool.acquire() as conn:
+        with pytest.raises((asyncio.TimeoutError, asyncpg.exceptions.QueryCanceledError)):
+            async with conn.transaction():
+                await conn.execute("SET LOCAL statement_timeout = 100")
+                await conn.fetch("SELECT pg_sleep(2)")
+
+
+async def test_pool_reconnect_after_backend_terminated(db) -> None:
+    # Acquire a connection, ask PG to kill it, release, then verify the
+    # next acquire returns a working connection within 5 seconds.
+    conn = await db.pool.acquire()
+    try:
+        pid = await conn.fetchval("SELECT pg_backend_pid()")
+        # Kill our own backend from a separate connection.
+        async with db.pool.acquire() as killer:
+            await killer.execute(
+                "SELECT pg_terminate_backend($1)",
+                pid,
+            )
+    finally:
+        # The connection is now dead; pool's release calls reset() which
+        # raises because the protocol is in a weird state. Pool will discard
+        # the broken connection internally; we just swallow the error.
+        with contextlib.suppress(Exception):
+            await db.pool.release(conn)
+    # The next acquire must give us a fresh, working connection.
+    async with asyncio.timeout(5.0):
+        async with db.pool.acquire() as fresh_conn:
+            result = await fresh_conn.fetchval("SELECT 1")
+            assert result == 1
