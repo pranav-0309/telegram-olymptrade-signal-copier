@@ -997,11 +997,16 @@ M4 uses **real PostgreSQL** via testcontainers (D-6). No mocks, no in-memory fak
 ### 7.1 `tests/conftest.py` (NEW)
 
 ```python
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
+
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
-from signal_copier.infra.db import Database
+if TYPE_CHECKING:
+    from signal_copier.infra.db import Database
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -1014,12 +1019,12 @@ async def pg_dsn() -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def db(pg_dsn: str) -> AsyncIterator[Database]:
     """Fresh Database per test: connect, TRUNCATE all tables, yield, close."""
+    from signal_copier.infra.db import Database
+
     database = await Database.connect(pg_dsn)
     try:
         async with database.pool.acquire() as conn:
-            await conn.execute(
-                "TRUNCATE signals, stages, daily_summary RESTART IDENTITY CASCADE"
-            )
+            await conn.execute("TRUNCATE signals, stages, daily_summary RESTART IDENTITY CASCADE")
         yield database
     finally:
         await database.close()
@@ -1029,6 +1034,7 @@ async def db(pg_dsn: str) -> AsyncIterator[Database]:
 - Session-scoped `pg_dsn`: container startup is ~1–2s; sharing across tests is the right tradeoff.
 - Function-scoped `db`: per-test TRUNCATE is ~1ms; gives clean isolation without per-test transaction complexity.
 - `pg.get_connection_url(driver="asyncpg")` returns a `postgresql+asyncpg://...` URL by default; the `driver=` argument strips the `+asyncpg` part so asyncpg can connect directly.
+- The `Database` import is inside the `db` fixture body (not at module top-level) because `signal_copier.infra.db` ships in Task 8 of this milestone. A top-level import would break `pytest --collect-only` for M0–M3 tests by raising `ModuleNotFoundError` on conftest load. The `TYPE_CHECKING` import satisfies the type annotation without importing at runtime.
 
 ### 7.2 `tests/test_db.py` (NEW)
 
