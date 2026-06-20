@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.scripts]
-signal-copier = "signal_copier.__main__:main"
+signal-copier      = "signal_copier.__main__:main"
+signal-copier-auth = "signal_copier.telegram.auth:main"
 
 [build-system]
 requires = ["hatchling"]
