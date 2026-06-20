@@ -129,3 +129,30 @@ def test_row_to_daily_summary_row_handles_null_limit_hit() -> None:
         realized_pnl=Decimal("12.84"),
         limit_hit=None,
     )
+
+
+from signal_copier.infra.db import _redact_dsn  # noqa: E402
+
+
+def test_redact_dsn_strips_password_url_form() -> None:
+    assert _redact_dsn("postgresql://user:secret@host:5432/db") == (
+        "postgresql://user:***@host:5432/db"
+    )
+
+
+def test_redact_dsn_preserves_query_params() -> None:
+    redacted = _redact_dsn(
+        "postgresql://user:secret@host:5432/db?sslmode=require&application_name=copier"
+    )
+    assert redacted == (
+        "postgresql://user:***@host:5432/db?sslmode=require&application_name=copier"
+    )
+
+
+def test_redact_dsn_handles_keyword_form() -> None:
+    redacted = _redact_dsn("host=h user=u password=secret dbname=d")
+    assert redacted == "host=h user=u password=*** dbname=d"
+
+
+def test_redact_dsn_no_password_unchanged() -> None:
+    assert _redact_dsn("postgresql://host:5432/db") == "postgresql://host:5432/db"
