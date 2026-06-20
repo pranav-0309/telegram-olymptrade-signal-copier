@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -80,12 +80,9 @@ def test_main_returns_1_on_database_connection_error(
     monkeypatch.setenv("DRY_RUN", "true")
 
     with patch.object(m5_main, "Database") as mock_db_cls:
-        mock_db = MagicMock()
-        mock_db.connect = AsyncMock(
+        mock_db_cls.connect = AsyncMock(
             side_effect=m5_main.DatabaseConnectionError("simulated"),
         )
-        mock_db_cls.connect = AsyncMock(return_value=mock_db)
-
         rc = m5_main.main()
 
     assert rc == 1
