@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -8,6 +9,8 @@ from typing import ClassVar
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
 from signal_copier.domain.state import StageResult
+
+_log = logging.getLogger(__name__)
 
 # OutcomeProvider is async so M8's real broker (or future tests needing IO)
 # can be a drop-in. The default and most test providers are sync internally;
@@ -48,8 +51,10 @@ class DryRunBroker:
     _PREFIX: ClassVar[str] = "dryrun"  # trade_id prefix; makes DB rows identifiable
 
     async def connect(self) -> None:
-        # Implementation lands in Task 3.
-        pass
+        _log.info(
+            "DryRunBroker connected (account_group=%s)",
+            self.account_group,
+        )
 
     async def place(
         self,
@@ -73,5 +78,4 @@ class DryRunBroker:
         return "win"
 
     async def close(self) -> None:
-        # Implementation lands in Task 3.
-        pass
+        _log.info("DryRunBroker closed")
