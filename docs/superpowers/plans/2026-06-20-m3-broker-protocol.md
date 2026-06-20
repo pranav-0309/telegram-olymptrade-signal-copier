@@ -251,12 +251,15 @@ If pre-commit auto-formats, re-run `git add` for the changed files and commit ag
 
 - [ ] **Step 1: Add failing Protocol conformance tests**
 
-Append the following tests to `tests/test_broker_protocol.py`:
+Replace the existing imports at the top of `tests/test_broker_protocol.py` with the imports below (adds `typing`, `Broker` alias, and `DryRunBroker`), then append the 4 conformance tests:
+
+> **Note on `typing.get_type_hints`:** With `from __future__ import annotations`, all annotations become strings at runtime. `inspect.signature(...).parameters["amount"].annotation` therefore returns the string `'Decimal'`, not the class. We use `typing.get_type_hints()` to resolve back to actual types. The keyword-only check uses `Parameter.kind` which still works on string-form annotations.
 
 ```python
 from __future__ import annotations
 
 import inspect
+import typing
 from decimal import Decimal
 from inspect import Parameter
 
@@ -275,8 +278,10 @@ def test_dry_run_broker_satisfies_canonical_protocol_path() -> None:
 
 
 def test_place_signature_accepts_decimal_amount() -> None:
-    sig = inspect.signature(DryRunBroker.place)
-    assert sig.parameters["amount"].annotation is Decimal
+    # typing.get_type_hints resolves PEP 563 string annotations back to actual
+    # types (works correctly with `from __future__ import annotations`).
+    hints = typing.get_type_hints(DryRunBroker.place)
+    assert hints["amount"] is Decimal
 
 
 def test_place_signature_keyword_only_stage_and_amount() -> None:
