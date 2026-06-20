@@ -81,11 +81,21 @@ class DryRunBroker:
         self,
         trade_id: str,
         *,
-        timeout: float,
+        timeout: float,  # noqa: ARG002 — dry-run ignores timeout (D-7)
     ) -> StageResult:
-        # Implementation lands in Tasks 5-7.
-        _ = trade_id, timeout
-        return "win"
+        _log.info("DRY-RUN wait_result: trade_id=%s (instant)", trade_id)
+        try:
+            signal, stage = self._placed.pop(trade_id)
+        except KeyError:
+            # Defensive: unknown trade_id means a caller bug. M6 is the only
+            # caller; this should never fire in production. Surface it as
+            # 'error' so the state machine ends the cascade cleanly.
+            _log.warning(
+                "DRY-RUN wait_result: unknown trade_id=%s; returning 'error'",
+                trade_id,
+            )
+            return "error"
+        return await self.outcome_provider(signal, stage)
 
     async def close(self) -> None:
         _log.info("DryRunBroker closed")

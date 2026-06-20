@@ -6,7 +6,9 @@ from decimal import Decimal
 import pytest
 
 from signal_copier.broker.dry_run import DryRunBroker
+from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
+from signal_copier.domain.state import StageResult
 
 
 def _signal(signal_id: str = "abc123def456") -> Signal:
@@ -98,3 +100,51 @@ async def test_place_logs_intended_trade(
         and trade_id in record.message
         for record in caplog.records
     )
+
+
+async def test_wait_result_default_returns_win() -> None:
+    broker = DryRunBroker()
+    sig = _signal()
+    for stage in ("initial", "gale1", "gale2"):
+        tid = await broker.place(
+            sig,
+            stage=stage,
+            amount=Decimal("2.00"),
+        )
+        result = await broker.wait_result(tid, timeout=330.0)
+        assert result == "win"
+
+
+async def test_wait_result_uses_custom_provider() -> None:
+    async def loss_all(s: Signal, st: Stage) -> StageResult:
+        return "loss"
+
+    broker = DryRunBroker(outcome_provider=loss_all)
+    sig = _signal()
+    tid = await broker.place(
+        sig,
+        stage="initial",
+        amount=Decimal("2.00"),
+    )
+    result = await broker.wait_result(tid, timeout=330.0)
+    assert result == "loss"
+
+
+async def test_wait_result_provider_receives_signal_and_stage() -> None:
+    captured: list[tuple[Signal, Stage]] = []
+
+    async def capture(s: Signal, st: Stage) -> StageResult:
+        captured.append((s, st))
+        return "win"
+
+    broker = DryRunBroker(outcome_provider=capture)
+    sig = _signal()
+    tid = await broker.place(
+        sig,
+        stage="gale1",
+        amount=Decimal("4.00"),
+    )
+    await broker.wait_result(tid, timeout=330.0)
+    assert len(captured) == 1
+    assert captured[0][0] is sig
+    assert captured[0][1] == "gale1"
