@@ -343,3 +343,88 @@ async def test_update_signal_state_warns_on_missing_signal_id(db, caplog) -> Non
             updated_at_unix=1.0,
         )
     assert any("no row" in r.message for r in caplog.records)
+
+
+from decimal import Decimal as _D  # noqa: E402
+
+from signal_copier.infra.state_store import StageAlreadyExistsError, StateStore  # noqa: E402
+
+
+async def test_record_stage_placed_returns_deterministic_trade_id(db) -> None:
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    tid1 = await db.state_store.record_stage_placed(
+        signal.signal_id,
+        "initial",
+        pair=signal.pair,
+        direction=signal.direction,
+        amount=_D("2.00"),
+        placed_at_unix=1.0,
+        expires_at_unix=301.0,
+    )
+    # Same args → same ID (computed independently, not from DB)
+    expected = StateStore._derive_trade_id(signal.signal_id, "initial", 1.0)
+    assert tid1 == expected
+    assert len(tid1) == 16
+
+
+async def test_record_stage_placed_inserts_row_with_all_fields(db) -> None:
+    from signal_copier.infra.db_rows import StageRow
+
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    tid = await db.state_store.record_stage_placed(
+        signal.signal_id,
+        "initial",
+        pair=signal.pair,
+        direction=signal.direction,
+        amount=_D("2.00"),
+        placed_at_unix=1_700_000_000.0,
+        expires_at_unix=1_700_000_300.0,
+        broker_trade_id="broker-abc",
+    )
+    # Read it back via raw SQL to confirm the row exists with the right fields.
+    async with db.pool.acquire() as conn:
+        record = await conn.fetchrow(
+            "SELECT * FROM stages WHERE trade_id = $1",
+            tid,
+        )
+    assert record is not None
+    row = row_to_stage_row(record)  # type: ignore[arg-type]
+    assert row == StageRow(
+        trade_id=tid,
+        signal_id=signal.signal_id,
+        stage="initial",
+        pair=signal.pair,
+        direction=signal.direction,
+        amount=_D("2.00"),
+        placed_at_unix=1_700_000_000.0,
+        expires_at_unix=1_700_000_300.0,
+        closed_at_unix=None,
+        pnl=None,
+        result="open",
+        broker_trade_id="broker-abc",
+    )
+
+
+async def test_record_stage_placed_raises_on_duplicate(db) -> None:
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    kwargs = dict(
+        pair=signal.pair,
+        direction=signal.direction,
+        amount=_D("2.00"),
+        placed_at_unix=1.0,
+        expires_at_unix=301.0,
+    )
+    await db.state_store.record_stage_placed(
+        signal.signal_id,
+        "initial",
+        **kwargs,
+    )
+    with pytest.raises(StageAlreadyExistsError):
+        await db.state_store.record_stage_placed(
+            signal.signal_id,
+            "initial",
+            **kwargs,
+        )

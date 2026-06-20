@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+from decimal import Decimal
+from typing import Literal
 
 import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
 
+from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
 from signal_copier.domain.state import AllStates, ErrorReason
 from signal_copier.infra.db_rows import SignalRow, row_to_signal_row
 
 _log = logging.getLogger(__name__)
+
+
+class StageAlreadyExistsError(Exception):
+    """Raised by StateStore.record_stage_placed() on a trade_id collision.
+
+    This is a programming bug, not a normal runtime event: the deterministic
+    trade_id derivation means a duplicate call with the same
+    (signal_id, stage, placed_at_unix) is either a caller bug or a
+    misbehaving restart-recovery path.
+    """
 
 
 class StateStore:
@@ -99,3 +113,62 @@ class StateStore:
                 "update_signal_state: no row for signal_id=%s (idempotent no-op)",
                 signal_id,
             )
+
+    async def record_stage_placed(
+        self,
+        signal_id: str,
+        stage: Stage,
+        *,
+        pair: str,
+        direction: Literal["up", "down"],
+        amount: Decimal,
+        placed_at_unix: float,
+        expires_at_unix: float,
+        broker_trade_id: str | None = None,
+    ) -> str:
+        """INSERT a row in `stages` marking a trade as placed.
+
+        Returns the deterministic trade_id:
+            sha1(f"{signal_id}|{stage}|{placed_at_unix:.6f}").hexdigest()[:16]
+        Raises StageAlreadyExistsError if the same (signal_id, stage, placed_at_unix)
+        is recorded twice.
+        """
+        trade_id = self._derive_trade_id(signal_id, stage, placed_at_unix)
+        sql = """
+            INSERT INTO stages (
+                trade_id, signal_id, stage, pair, direction, amount,
+                placed_at_unix, expires_at_unix, result, broker_trade_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9)
+            ON CONFLICT (trade_id) DO NOTHING
+            RETURNING trade_id
+        """
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchval(
+                sql,
+                trade_id,
+                signal_id,
+                stage,
+                pair,
+                direction,
+                amount,
+                placed_at_unix,
+                expires_at_unix,
+                broker_trade_id,
+            )
+        if row is None:
+            raise StageAlreadyExistsError(
+                f"stages.trade_id={trade_id} already exists "
+                f"(signal_id={signal_id} stage={stage} "
+                f"placed_at_unix={placed_at_unix:.6f})"
+            )
+        return trade_id
+
+    @staticmethod
+    def _derive_trade_id(
+        signal_id: str,
+        stage: Stage,
+        placed_at_unix: float,
+    ) -> str:
+        """Deterministic 16-char trade_id."""
+        payload = f"{signal_id}|{stage}|{placed_at_unix:.6f}"
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
