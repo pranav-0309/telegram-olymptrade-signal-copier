@@ -1020,7 +1020,7 @@ if TYPE_CHECKING:
 async def pg_dsn() -> AsyncIterator[str]:
     """Spin up a real PG 16 container, return its DSN, drop at session end."""
     with PostgresContainer("postgres:16-alpine") as pg:
-        yield pg.get_connection_url(driver="asyncpg")
+        yield pg.get_connection_url(driver=None)
 
 
 @pytest_asyncio.fixture
@@ -1040,7 +1040,7 @@ async def db(pg_dsn: str) -> AsyncIterator[Database]:
 **Notes:**
 - Session-scoped `pg_dsn`: container startup is ~1–2s; sharing across tests is the right tradeoff.
 - Function-scoped `db`: per-test TRUNCATE is ~1ms; gives clean isolation without per-test transaction complexity.
-- `pg.get_connection_url(driver="asyncpg")` returns a `postgresql+asyncpg://...` URL by default; the `driver=` argument strips the `+asyncpg` part so asyncpg can connect directly.
+- `pg.get_connection_url(driver=None)` returns a `postgresql://...` URL (the default form). Passing `driver="asyncpg"` would produce `postgresql+asyncpg://...` which asyncpg cannot parse. The spec originally had `driver="asyncpg"` — corrected in Task 8 after the integration tests surfaced the parse error.
 - The `Database` import is inside the `db` fixture body (not at module top-level) because `signal_copier.infra.db` ships in Task 8 of this milestone. A top-level import would break `pytest --collect-only` for M0–M3 tests by raising `ModuleNotFoundError` on conftest load. The `TYPE_CHECKING` import satisfies the type annotation without importing at runtime.
 
 ### 7.2 `tests/test_db.py` (NEW)

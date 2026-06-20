@@ -156,3 +156,63 @@ def test_redact_dsn_handles_keyword_form() -> None:
 
 def test_redact_dsn_no_password_unchanged() -> None:
     assert _redact_dsn("postgresql://host:5432/db") == "postgresql://host:5432/db"
+
+
+import pytest  # noqa: E402
+
+from signal_copier.infra.db import Database, DatabaseConnectionError  # noqa: E402
+
+
+async def test_migrations_create_expected_tables(db) -> None:
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' ORDER BY table_name"
+        )
+    table_names = {r["table_name"] for r in rows}
+    assert table_names == {"signals", "stages", "daily_summary"}
+
+
+async def test_migrations_create_expected_indexes(db) -> None:
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname"
+        )
+    index_names = {r["indexname"] for r in rows}
+    assert index_names >= {
+        "idx_signals_status",
+        "idx_signals_trigger_ts",
+        "idx_stages_signal_id",
+        "idx_stages_placed_at",
+        "idx_stages_result",
+    }
+
+
+async def test_migrations_are_idempotent(pg_dsn) -> None:
+    # Second connect on the same DSN must succeed (CREATE TABLE IF NOT EXISTS).
+    db1 = await Database.connect(pg_dsn)
+    try:
+        await db1.close()
+    finally:
+        pass
+    db2 = await Database.connect(pg_dsn)
+    try:
+        # If we get here without error, idempotency is verified.
+        assert db2.pool is not None
+    finally:
+        await db2.close()
+
+
+async def test_database_connection_error_on_unreachable_host() -> None:
+    bad_dsn = "postgresql://nobody:nopass@127.0.0.1:1/nodb"
+    with pytest.raises(DatabaseConnectionError) as excinfo:
+        await Database.connect(bad_dsn)
+    assert "Cannot reach PostgreSQL" in str(excinfo.value)
+
+
+async def test_database_connection_error_redacts_password() -> None:
+    bad_dsn = "postgresql://user:supersecret@127.0.0.1:1/nodb"
+    with pytest.raises(DatabaseConnectionError) as excinfo:
+        await Database.connect(bad_dsn)
+    assert "supersecret" not in str(excinfo.value)
+    assert "***" in str(excinfo.value)

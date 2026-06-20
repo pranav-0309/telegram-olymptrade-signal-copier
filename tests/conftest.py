@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 async def pg_dsn() -> AsyncIterator[str]:
     """Spin up a real PG 16 container, return its DSN, drop at session end."""
     with PostgresContainer("postgres:16-alpine") as pg:
-        yield pg.get_connection_url(driver="asyncpg")
+        yield pg.get_connection_url(driver=None)
 
 
 @pytest_asyncio.fixture
