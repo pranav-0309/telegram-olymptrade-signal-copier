@@ -404,7 +404,7 @@ def row_to_daily_summary_row(record: Record) -> DailySummaryRow:
 **Notes:**
 
 - All three row types are frozen dataclasses with `slots=True` — consistent with M1's `Signal` (which has the same shape pattern) and M2's `SignalState`.
-- The `StageResult` value in `StageRow` may be `"open"` (the row was just inserted; no result yet) or one of `"win" | "loss" | "tie" | "timeout" | "error"`. M2's existing `StageResult` literal already includes `"open"` via PRD §9.0's CHECK constraint.
+- The `StageResult` value in `StageRow` may be `"open"` (the row was just inserted; no result yet) or one of `"win" | "loss" | "tie" | "timeout" | "error"`. M2's `StageResult` literal (`src/signal_copier/domain/state.py:37`) covers only the 5 terminal outcomes; this module widens the DB row type via the local `StageDbResult = Literal["open", "win", "loss", "tie", "timeout", "error"]` alias. M2's narrow literal stays correct for the in-memory `SignalState.result` and for `record_stage_result()`'s input parameter — neither ever holds `"open"`.
 - `row_to_*` mappers are pure functions — easily unit-testable with hand-built `asyncpg.Record` instances.
 - The `Decimal(str(value))` cast is the single point of float-precision handling in the codebase (D-7). It's named explicitly so a future v2 migration to `NUMERIC(12,4)` has one place to change.
 
