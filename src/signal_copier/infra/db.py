@@ -7,6 +7,8 @@ from typing import Final
 
 import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
 
+from signal_copier.infra.state_store import StateStore
+
 _log = logging.getLogger(__name__)
 
 
@@ -72,9 +74,9 @@ class Database:
     """
 
     pool: asyncpg.Pool
-    state_store: object  # StateStore; filled in during M4's later task
+    state_store: StateStore
 
-    def __init__(self, pool: asyncpg.Pool, state_store: object) -> None:
+    def __init__(self, pool: asyncpg.Pool, state_store: StateStore) -> None:
         self.pool = pool
         self.state_store = state_store
 
@@ -103,7 +105,8 @@ class Database:
             "Database connected (pool min=2 max=10, command_timeout=30s, "
             "migration=001_initial applied)",
         )
-        return cls(pool, state_store=None)
+        state_store = StateStore(pool)
+        return cls(pool, state_store)
 
     async def close(self) -> None:
         """Close the pool. Idempotent."""

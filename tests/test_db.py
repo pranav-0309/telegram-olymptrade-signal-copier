@@ -216,3 +216,79 @@ async def test_database_connection_error_redacts_password() -> None:
         await Database.connect(bad_dsn)
     assert "supersecret" not in str(excinfo.value)
     assert "***" in str(excinfo.value)
+
+
+from datetime import date as _date  # noqa: E402
+
+from signal_copier.domain.signal import Signal, derive_signal_id  # noqa: E402
+
+
+def _make_signal(
+    pair: str = "EUR/JPY",
+    direction: str = "down",
+    trigger_hhmm: str = "10:20",
+    signal_date: _date | None = None,
+) -> Signal:
+    """Build a Signal dataclass for tests. trigger_unix_X computed from now."""
+    import time
+
+    now = time.time()
+    # Trigger at "now + 60s" so it's in the future.
+    trigger_initial = now + 60.0
+    parsed = type(
+        "P",
+        (),
+        {
+            "pair": pair,
+            "direction": direction,
+            "trigger_hhmm": trigger_hhmm,
+        },
+    )()  # minimal stand-in for ParsedSignal
+    sid = derive_signal_id(parsed, signal_date=signal_date or _date.today())
+    return Signal(
+        signal_id=sid,
+        pair=pair,
+        direction=direction,  # type: ignore[arg-type]
+        trigger_hhmm=trigger_hhmm,
+        expiration_seconds=300,
+        received_at_unix=now,
+        source_message_id=42,
+        source_chat_id=-1001234567890,
+        raw_text="💰5-minute expiration\nEUR/JPY;10:20;PUT🟥",
+        trigger_unix_initial=trigger_initial,
+        trigger_unix_gale1=trigger_initial + 300.0,
+        trigger_unix_gale2=trigger_initial + 600.0,
+    )
+
+
+async def test_upsert_signal_inserts_new_returns_true(db) -> None:
+    signal = _make_signal()
+    inserted = await db.state_store.upsert_signal(signal)
+    assert inserted is True
+
+
+async def test_upsert_signal_duplicate_returns_false(db) -> None:
+    signal = _make_signal()
+    first = await db.state_store.upsert_signal(signal)
+    second = await db.state_store.upsert_signal(signal)
+    assert first is True
+    assert second is False
+
+
+async def test_get_signal_returns_none_for_missing(db) -> None:
+    assert await db.state_store.get_signal("nonexistent") is None
+
+
+async def test_get_signal_round_trip(db) -> None:
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    row = await db.state_store.get_signal(signal.signal_id)
+    assert row is not None
+    assert row.signal_id == signal.signal_id
+    assert row.pair == "EUR/JPY"
+    assert row.direction == "down"
+    assert row.trigger_hhmm == "10:20"
+    assert row.status == "pending"
+    assert row.error_reason is None
+    assert row.expiration_seconds == 300
+    assert row.source_message_id == 42
