@@ -428,3 +428,48 @@ async def test_record_stage_placed_raises_on_duplicate(db) -> None:
             "initial",
             **kwargs,
         )
+
+
+async def test_record_stage_result_updates_row(db) -> None:
+    from signal_copier.infra.db_rows import row_to_stage_row
+
+    signal = _make_signal()
+    await db.state_store.upsert_signal(signal)
+    tid = await db.state_store.record_stage_placed(
+        signal.signal_id,
+        "initial",
+        pair=signal.pair,
+        direction=signal.direction,
+        amount=_D("2.00"),
+        placed_at_unix=1.0,
+        expires_at_unix=301.0,
+    )
+    await db.state_store.record_stage_result(
+        tid,
+        "win",
+        pnl=_D("1.84"),
+        closed_at_unix=400.0,
+    )
+    async with db.pool.acquire() as conn:
+        record = await conn.fetchrow(
+            "SELECT * FROM stages WHERE trade_id = $1",
+            tid,
+        )
+    assert record is not None
+    row = row_to_stage_row(record)  # type: ignore[arg-type]
+    assert row.result == "win"
+    assert row.pnl == _D("1.84")
+    assert row.closed_at_unix == 400.0
+
+
+async def test_record_stage_result_warns_on_missing_trade_id(db, caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        await db.state_store.record_stage_result(
+            "nonexistent-trade-id",
+            "win",
+            pnl=_D("1.84"),
+            closed_at_unix=400.0,
+        )
+    assert any("no row" in r.message for r in caplog.records)

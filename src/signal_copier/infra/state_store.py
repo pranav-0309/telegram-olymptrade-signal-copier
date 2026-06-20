@@ -9,7 +9,7 @@ import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
 
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
-from signal_copier.domain.state import AllStates, ErrorReason
+from signal_copier.domain.state import AllStates, ErrorReason, StageResult
 from signal_copier.infra.db_rows import SignalRow, row_to_signal_row
 
 _log = logging.getLogger(__name__)
@@ -172,3 +172,29 @@ class StateStore:
         """Deterministic 16-char trade_id."""
         payload = f"{signal_id}|{stage}|{placed_at_unix:.6f}"
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+    async def record_stage_result(
+        self,
+        trade_id: str,
+        result: StageResult,
+        *,
+        pnl: Decimal,
+        closed_at_unix: float,
+    ) -> None:
+        """Update an existing `stages` row with the broker-reported result.
+
+        Idempotent: re-writing the same result is a no-op. If trade_id
+        doesn't exist, logs a warning.
+        """
+        sql = """
+            UPDATE stages
+            SET result = $1, pnl = $2, closed_at_unix = $3
+            WHERE trade_id = $4
+        """
+        async with self._pool.acquire() as conn, conn.transaction():
+            tag = await conn.execute(sql, result, pnl, closed_at_unix, trade_id)
+        if tag.endswith(" 0"):
+            _log.warning(
+                "record_stage_result: no row for trade_id=%s (late push event?)",
+                trade_id,
+            )
