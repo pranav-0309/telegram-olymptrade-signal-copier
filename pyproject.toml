@@ -7,9 +7,10 @@ requires-python = ">=3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "Owner" }]
 dependencies = [
-    "pydantic-settings>=2.6",  # M2: config layer (D-3)
-    "tzdata>=2024.1",          # IANA tz database on Windows; no-op on Linux/macOS
-    "asyncpg>=0.30",           # M4: async-native PostgreSQL driver (PRD §6, R-13)
+    "pydantic-settings>=2.6",  # M2: config layer
+    "tzdata>=2024.1",          # IANA tz database on Windows
+    "asyncpg>=0.30",           # M4: async PostgreSQL driver
+    "telethon>=1.44",          # M5: Telegram MTProto user-account client
 ]
 
 [project.scripts]
