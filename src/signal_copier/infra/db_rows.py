@@ -6,7 +6,14 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from signal_copier.domain.gale import Stage
-from signal_copier.domain.state import AllStates, ErrorReason, StageResult
+from signal_copier.domain.state import AllStates, ErrorReason
+
+# All 6 stage-result values the `stages.result` column can hold (per the DB
+# CHECK constraint and `record_stage_placed` which inserts 'open'). M2's
+# `StageResult` literal only covers the 5 terminal outcomes; this row type
+# widens it to include the 'open' pre-terminal state that's legitimate in
+# the database but never observed in the in-memory `SignalState.result`.
+StageDbResult = Literal["open", "win", "loss", "tie", "timeout", "error"]
 
 Direction = Literal["up", "down"]
 
@@ -43,7 +50,7 @@ class StageRow:
     expires_at_unix: float
     closed_at_unix: float | None
     pnl: Decimal | None
-    result: StageResult
+    result: StageDbResult
     broker_trade_id: str | None
 
 
