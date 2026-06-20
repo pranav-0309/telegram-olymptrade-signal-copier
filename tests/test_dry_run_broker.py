@@ -180,3 +180,13 @@ async def test_multiple_in_flight_places_do_not_collide() -> None:
     assert await broker.wait_result(tid1, timeout=330.0) == "win"
     assert await broker.wait_result(tid2, timeout=330.0) == "win"
     assert broker._placed == {}  # both popped
+
+
+async def test_wait_result_unknown_trade_id_returns_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = DryRunBroker()
+    with caplog.at_level(logging.WARNING):
+        result = await broker.wait_result("unknown-id", timeout=330.0)
+    assert result == "error"
+    assert any("unknown trade_id" in record.message for record in caplog.records)
