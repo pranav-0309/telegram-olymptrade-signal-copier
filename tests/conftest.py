@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
-from signal_copier.infra.db import Database
+if TYPE_CHECKING:
+    from signal_copier.infra.db import Database
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -18,6 +20,8 @@ async def pg_dsn() -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def db(pg_dsn: str) -> AsyncIterator[Database]:
     """Fresh Database per test: connect, TRUNCATE all tables, yield, close."""
+    from signal_copier.infra.db import Database
+
     database = await Database.connect(pg_dsn)
     try:
         async with database.pool.acquire() as conn:
