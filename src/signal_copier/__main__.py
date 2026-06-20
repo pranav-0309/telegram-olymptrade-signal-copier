@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pydantic import ValidationError
 
 from signal_copier.config import Config
+from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
 from signal_copier.infra.log import setup_logging, setup_parse_failures_log
 from signal_copier.telegram.client import TelegramClient, TelegramConfigError
@@ -20,7 +21,7 @@ _SIGNALS_QUEUE_MAXSIZE: int = 1000
 
 
 def _build_dump_consumer(
-    queue: asyncio.Queue,
+    queue: asyncio.Queue[Signal],
 ) -> asyncio.Task[None]:
     """Return an asyncio Task that drains `queue` and pretty-prints each Signal.
 
@@ -56,7 +57,7 @@ async def _run(config: Config) -> int:
         )
         await tg.connect()
 
-        signals_queue: asyncio.Queue = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
+        signals_queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
         parse_failures = setup_parse_failures_log(config.log_path.parent)
 
         listener = Listener(

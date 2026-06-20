@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar
+from typing import Any
 
 from telethon import TelegramClient as _TelethonClient
 from telethon.errors import FloodWaitError
@@ -13,10 +13,10 @@ from telethon.sessions import StringSession
 _log = logging.getLogger(__name__)
 
 
-_MAX_RECONNECT_ATTEMPTS: ClassVar[int] = 10
-_BACKOFF_BASE_SECONDS: ClassVar[float] = 1.0
-_BACKOFF_CAP_SECONDS: ClassVar[float] = 30.0
-_FLOOD_WAIT_THRESHOLD_SECONDS: ClassVar[int] = 60
+_MAX_RECONNECT_ATTEMPTS: int = 10
+_BACKOFF_BASE_SECONDS: float = 1.0
+_BACKOFF_CAP_SECONDS: float = 30.0
+_FLOOD_WAIT_THRESHOLD_SECONDS: int = 60
 
 
 class TelegramConfigError(RuntimeError):
@@ -30,7 +30,7 @@ def compute_backoff_seconds(attempt: int) -> float:
     attempt=0 -> 1.0, attempt=1 -> 2.0, ..., attempt=4 -> 16.0,
     attempt>=5 -> 30.0 (capped).
     """
-    return min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_CAP_SECONDS)
+    return min(_BACKOFF_BASE_SECONDS * (2.0**attempt), _BACKOFF_CAP_SECONDS)
 
 
 class TelegramClient:

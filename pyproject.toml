@@ -56,6 +56,19 @@ python_version = "3.13"
 exclude = ["src/olymptrade_ws"]
 
 [[tool.mypy.overrides]]
+# Telethon ships without a py.typed marker, so mypy treats its imports as Any
+# and surfaces "missing library stubs" for every transitive import. The wrapper
+# in src/signal_copier/telegram/ validates config + handles FloodWaitError;
+# no telethon type contracts leak into the rest of the codebase.
+module = [
+    "telethon",
+    "telethon.errors",
+    "telethon.events",
+    "telethon.sessions",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # Tests use Pydantic private APIs (_env_file), untyped **kwargs helpers, and
 # rely on mypy-not-knowable narrowing (e.g. transition() returning a state the
 # caller then asserts is non-None). Keep src strict; relax tests only.

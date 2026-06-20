@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from typing import cast
 
 from pydantic import ValidationError
 from telethon import TelegramClient as _TelethonClient
@@ -33,7 +34,7 @@ async def _do_auth(api_id: int, api_hash: str, phone: str) -> str:
     """Run the Telethon interactive auth flow, return the StringSession string."""
     client = _TelethonClient(StringSession(), api_id, api_hash)
     await client.start(phone=phone)  # interactive: prompts for code + 2FA
-    session_str = client.session.save()
+    session_str = cast(str, client.session.save())
     await client.disconnect()
     return session_str
 
@@ -49,7 +50,7 @@ def main() -> int:
         api_id, api_hash, phone = _read_creds()
     except (ValidationError, ValueError) as exc:
         sys.stderr.write(
-            f"❌ Config validation failed; check API_ID / API_HASH / PHONE in .env:\n" f"{exc}\n"
+            f"❌ Config validation failed; check API_ID / API_HASH / PHONE in .env:\n{exc}\n"
         )
         return 2
     except TelegramConfigError as exc:
