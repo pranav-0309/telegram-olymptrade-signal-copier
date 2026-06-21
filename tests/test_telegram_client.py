@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from signal_copier.notify.protocol import NoOpNotifier
 from signal_copier.telegram.client import (
     TelegramClient,
     TelegramConfigError,
@@ -162,3 +163,57 @@ async def test_send_to_self_raises_before_connect() -> None:
         # send_to_self is async, so the body (and its RuntimeError) only
         # runs when awaited — unlike the sync add_message_handler check.
         await client.send_to_self("hello")
+
+
+# --- TelegramClient.start() with optional notifier -----------------------
+
+
+async def test_start_emits_on_telegram_disconnect_on_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When run_until_disconnected() raises ConnectionError, the optional
+    notifier's on_telegram_disconnect() must be called BEFORE the backoff
+    sleep (so the DM fires as soon as the disconnect is detected)."""
+    notifier = NoOpNotifier()
+    disconnect_calls: list[None] = []
+
+    # Wrap the NoOpNotifier method to record the call.
+    original = notifier.on_telegram_disconnect
+
+    async def recorder() -> None:
+        disconnect_calls.append(None)
+        await original()
+
+    notifier.on_telegram_disconnect = recorder  # type: ignore[method-assign]
+
+    client = TelegramClient(
+        api_id=1, api_hash="abc", phone="+1", session_string="s", target_chat="@c"
+    )
+    fake_telethon = MagicMock()
+    call_count = {"n": 0}
+
+    async def fake_run() -> None:
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            client._client = None  # type: ignore[attr-defined]  # exit the loop
+            return
+        raise ConnectionError("simulated disconnect")
+
+    fake_telethon.run_until_disconnected = fake_run
+    fake_telethon.disconnect = AsyncMock()
+    client._client = fake_telethon  # type: ignore[attr-defined]
+
+    # Patch asyncio.sleep so the test doesn't actually wait.
+    sleeps: list[float] = []
+
+    async def fake_sleep(secs: float) -> None:
+        sleeps.append(secs)
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    await client.start(notifier=notifier)
+
+    assert (
+        len(disconnect_calls) == 1
+    ), "on_telegram_disconnect must fire exactly once on ConnectionError"
+    assert len(sleeps) == 1  # one backoff sleep after the disconnect

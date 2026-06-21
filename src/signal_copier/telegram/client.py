@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from telethon import TelegramClient as _TelethonClient
 from telethon.errors import FloodWaitError
 from telethon.events import MessageEdited, NewMessage
 from telethon.sessions import StringSession
+
+if TYPE_CHECKING:
+    from signal_copier.notify.protocol import Notifier
 
 _log = logging.getLogger(__name__)
 
@@ -114,7 +117,7 @@ class TelegramClient:
         self._client.on(NewMessage)(handler)
         self._client.on(MessageEdited)(handler)
 
-    async def start(self) -> None:
+    async def start(self, *, notifier: Notifier | None = None) -> None:
         if self._client is None:
             raise RuntimeError("start() called before connect()")
         attempt = 0
@@ -148,6 +151,8 @@ class TelegramClient:
                     _MAX_RECONNECT_ATTEMPTS,
                     delay,
                 )
+                if notifier is not None:
+                    await notifier.on_telegram_disconnect()
                 await asyncio.sleep(delay)
 
     async def send_to_self(self, text: str) -> None:
