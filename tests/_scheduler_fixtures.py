@@ -21,7 +21,7 @@ from typing import Any
 
 from signal_copier.broker.base import Broker, UnsupportedPairError
 from signal_copier.domain.gale import Stage
-from signal_copier.domain.signal import Signal
+from signal_copier.domain.signal import FailureReason, Signal
 from signal_copier.domain.state import AllStates, ErrorReason, StageResult, TerminalState
 from signal_copier.infra.db_rows import DailySummaryRow, SignalRow
 from signal_copier.notify.protocol import Notifier
@@ -209,6 +209,23 @@ class RecordingNotifier(Notifier):
             "on_bot_stopping",
             open_cascades=open_cascades,
         )
+
+    async def on_parse_failure(
+        self,
+        raw_text: str,
+        reason: FailureReason,
+    ) -> None:
+        await self._record(
+            "on_parse_failure",
+            raw_text=raw_text,
+            reason=reason,
+        )
+
+    async def on_telegram_disconnect(self) -> None:
+        await self._record("on_telegram_disconnect")
+
+    async def on_olymp_disconnect(self) -> None:
+        await self._record("on_olymp_disconnect")
 
 
 def make_signal_with_future_trigger(
