@@ -216,6 +216,7 @@ def _make_supervisor(
     config: Config | None = None,
     trigger_in_seconds: float = 0.05,
     signal_id: str = "test-sig-1",
+    expiration_seconds: int = 300,
 ):
     """Build a SignalSupervisor ready to run. We DON'T run the scheduler;
     we run the supervisor directly via `await supervisor.run()`."""
@@ -227,6 +228,7 @@ def _make_supervisor(
     signal = make_signal_with_future_trigger(
         trigger_in_seconds=trigger_in_seconds,
         signal_id=signal_id,
+        expiration_seconds=expiration_seconds,
     )
     supervisor = SignalSupervisor(
         signal=signal,
@@ -523,3 +525,85 @@ async def test_supervisor_initial_win_terminal() -> None:
     assert "on_trade_placed" in method_names
     assert "on_win" in method_names
     assert "on_cascade_complete" in method_names
+
+
+# --- Multi-stage cascade tests (Task 10) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_supervisor_full_cascade_initial_loss_gale1_loss_gale2_win() -> None:
+    """Full cascade: initial loss → gale1 loss → gale2 win → done_win."""
+    state_store = FakeStateStore()
+    broker = FakeBroker(
+        program_outcomes={
+            "initial": "loss",
+            "gale1": "loss",
+            "gale2": "win",
+        },
+    )
+    supervisor, signal, _, notifier = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        expiration_seconds=1,  # gale1 at +1s, gale2 at +2s — fast cascade
+        signal_id="test-sig-full",
+    )
+
+    await supervisor.run()
+
+    stages_placed = [c["stage"] for c in state_store.stages_placed]
+    assert stages_placed == ["initial", "gale1", "gale2"]
+    assert [c["result"] for c in state_store.stage_results] == ["loss", "loss", "win"]
+    final = [u for u in state_store.state_updates if u["new_state"] == "done_win"]
+    assert len(final) == 1
+    method_names = [m for m, _ in notifier.calls]
+    assert method_names.count("on_loss") == 2  # initial + gale1
+    assert method_names.count("on_win") == 1  # gale2
+
+
+@pytest.mark.asyncio
+async def test_supervisor_initial_loss_gale1_win() -> None:
+    """gale1 wins — cascade ends at gale1, gale2 NOT placed."""
+    state_store = FakeStateStore()
+    broker = FakeBroker(program_outcomes={"initial": "loss", "gale1": "win"})
+    supervisor, signal, _, notifier = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        expiration_seconds=1,
+        signal_id="test-sig-g1win",
+    )
+
+    await supervisor.run()
+
+    stages_placed = [c["stage"] for c in state_store.stages_placed]
+    assert stages_placed == ["initial", "gale1"]
+    final = [u for u in state_store.state_updates if u["new_state"] == "done_win"]
+    assert len(final) == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_all_loss_ends_at_done_loss() -> None:
+    """All three stages lose → terminal done_loss, cumulative_pnl = -$14."""
+    state_store = FakeStateStore()
+    broker = FakeBroker(
+        program_outcomes={
+            "initial": "loss",
+            "gale1": "loss",
+            "gale2": "loss",
+        },
+    )
+    supervisor, signal, _, notifier = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        expiration_seconds=1,
+        signal_id="test-sig-allloss",
+    )
+
+    await supervisor.run()
+
+    stages_placed = [c["stage"] for c in state_store.stages_placed]
+    assert stages_placed == ["initial", "gale1", "gale2"]
+    final = [u for u in state_store.state_updates if u["new_state"] == "done_loss"]
+    assert len(final) == 1
