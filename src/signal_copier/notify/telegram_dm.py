@@ -17,7 +17,7 @@ from loguru import logger as _loguru_logger
 from signal_copier.config import Config
 from signal_copier.domain.gale import Stage, amount_for_stage
 from signal_copier.domain.signal import FailureReason, Signal
-from signal_copier.infra.clock import format_local_hhmm
+from signal_copier.infra.clock import format_local_hhmm, now_unix
 
 if TYPE_CHECKING:
     from signal_copier.domain.state import TerminalState
@@ -67,6 +67,10 @@ class TelegramDMNotifier:
         The caller typically prepends '$'.
         """
         return f"{decimal:+.2f}"
+
+    def _duration_human(self, start_unix: float, end_unix: float) -> str:
+        delta = max(0, int(end_unix - start_unix))
+        return f"{delta // 60}m{delta % 60:02d}s"
 
     # --- Methods below are filled in by Tasks 9-13. ---
 
@@ -225,7 +229,16 @@ class TelegramDMNotifier:
         final_state: TerminalState,
         cumulative_pnl: Decimal,
     ) -> None:
-        raise NotImplementedError
+        duration = self._duration_human(signal.received_at_unix, now_unix())
+        # fmt: off
+        text = (
+            f"🏁 Cascade complete: {final_state}\n"
+            f"Signal ID: {signal.signal_id}\n"
+            f"Total PnL: ${self._fmt_signed(cumulative_pnl)}\n"
+            f"Duration: {duration}"
+        )
+        # fmt: on
+        await self._send(text)
 
     async def on_signal_rejected_by_limit(
         self,
@@ -233,7 +246,34 @@ class TelegramDMNotifier:
         limit_type: str,
         summary: DailySummaryRow,
     ) -> None:
-        raise NotImplementedError
+        if limit_type == "loss":
+            # fmt: off
+            text = (
+                f"⚠️ Daily loss limit reached\n"
+                f"Losses today: {self._fmt_pnl(summary.realized_pnl)}\n"
+                f"Limit: ${self._config.daily_loss_limit:.2f}\n"
+                f"Action: no new signals until 00:00 (UTC-3)"
+            )
+            # fmt: on
+        elif limit_type == "count":
+            # fmt: off
+            text = (
+                f"⚠️ Daily trade limit reached\n"
+                f"Trades today: {summary.trades_count}\n"
+                f"Limit: {self._config.daily_trade_limit}\n"
+                f"Action: no new signals until 00:00 (UTC-3)"
+            )
+            # fmt: on
+        else:  # drawdown
+            # fmt: off
+            text = (
+                f"⚠️ Daily drawdown limit reached\n"
+                f"Drawdown today: {self._fmt_pnl(summary.realized_pnl)}\n"
+                f"Limit: {self._config.daily_drawdown_pct}%\n"
+                f"Action: no new signals until 00:00 (UTC-3)"
+            )
+            # fmt: on
+        await self._send(text)
 
     async def on_bot_started(self, *, mode: str, watching: str, timezone: str) -> None:
         # fmt: off
@@ -251,7 +291,14 @@ class TelegramDMNotifier:
         await self._send(text)
 
     async def on_parse_failure(self, raw_text: str, reason: FailureReason) -> None:
-        raise NotImplementedError
+        # fmt: off
+        text = (
+            f"⚠️ Skipped message (not a valid signal)\n"
+            f"Reason: {reason.value}\n"
+            f"Preview: {raw_text[:80]}"
+        )
+        # fmt: on
+        await self._send(text)
 
     async def on_telegram_disconnect(self) -> None:
         await self._send("🔌 Telegram disconnected. Reconnecting…")

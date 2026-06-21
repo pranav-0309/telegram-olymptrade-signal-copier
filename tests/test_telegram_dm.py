@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -11,7 +12,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from signal_copier.config import Config
-from signal_copier.domain.signal import Signal
+from signal_copier.domain.signal import FailureReason, Signal
+from signal_copier.infra.db_rows import DailySummaryRow
 from signal_copier.notify.protocol import Notifier
 from signal_copier.notify.telegram_dm import TelegramDMNotifier
 
@@ -392,3 +394,107 @@ async def test_signal_expired_gale2() -> None:
         "Action: cascade ended, no recovery attempted"
     )
     assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_cascade_complete() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_cascade_complete(
+        signal, final_state="done_win", cumulative_pnl=Decimal("1.84")
+    )
+    # Duration is "XmYYs" — assert prefix and suffix
+    assert fake.sent[0].startswith(
+        "🏁 Cascade complete: done_win\n" "Signal ID: sig-abc\n" "Total PnL: $+1.84\n" "Duration: "
+    )
+    assert fake.sent[0].endswith("s")
+
+
+@pytest.mark.asyncio
+async def test_rejected_by_loss_limit() -> None:
+    fake = FakeTgClient()
+    config = _make_config(daily_loss_limit=Decimal("50.00"))
+    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    signal = _make_signal(direction="down")
+    summary = DailySummaryRow(
+        date=date(2026, 6, 21),
+        signals_count=10,
+        trades_count=10,
+        wins=2,
+        losses=8,
+        realized_pnl=Decimal("-50.00"),
+        limit_hit="loss",
+    )
+    await notifier.on_signal_rejected_by_limit(signal, limit_type="loss", summary=summary)
+    expected = (
+        "⚠️ Daily loss limit reached\n"
+        "Losses today: $-50.00\n"
+        "Limit: $50.00\n"
+        "Action: no new signals until 00:00 (UTC-3)"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_rejected_by_count_limit() -> None:
+    fake = FakeTgClient()
+    config = _make_config(daily_trade_limit=50)
+    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    signal = _make_signal(direction="down")
+    summary = DailySummaryRow(
+        date=date(2026, 6, 21),
+        signals_count=50,
+        trades_count=50,
+        wins=20,
+        losses=30,
+        realized_pnl=Decimal("0.00"),
+        limit_hit="count",
+    )
+    await notifier.on_signal_rejected_by_limit(signal, limit_type="count", summary=summary)
+    expected = (
+        "⚠️ Daily trade limit reached\n"
+        "Trades today: 50\n"
+        "Limit: 50\n"
+        "Action: no new signals until 00:00 (UTC-3)"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_rejected_by_drawdown_limit() -> None:
+    fake = FakeTgClient()
+    config = _make_config(daily_drawdown_pct=20)
+    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    signal = _make_signal(direction="down")
+    summary = DailySummaryRow(
+        date=date(2026, 6, 21),
+        signals_count=20,
+        trades_count=20,
+        wins=10,
+        losses=10,
+        realized_pnl=Decimal("-30.00"),
+        limit_hit="drawdown",
+    )
+    await notifier.on_signal_rejected_by_limit(signal, limit_type="drawdown", summary=summary)
+    expected = (
+        "⚠️ Daily drawdown limit reached\n"
+        "Drawdown today: $-30.00\n"
+        "Limit: 20%\n"
+        "Action: no new signals until 00:00 (UTC-3)"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_parse_failure() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    raw = "random text that doesn't match the signal regex" + "x" * 100
+    await notifier.on_parse_failure(raw_text=raw, reason=FailureReason.MISSING_SIGNAL_LINE)
+    # Preview is the first 80 chars.
+    assert fake.sent[0] == (
+        "⚠️ Skipped message (not a valid signal)\n"
+        "Reason: missing_signal_line\n"
+        f"Preview: {raw[:80]}"
+    )
