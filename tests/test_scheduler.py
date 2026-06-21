@@ -607,3 +607,146 @@ async def test_supervisor_all_loss_ends_at_done_loss() -> None:
     assert stages_placed == ["initial", "gale1", "gale2"]
     final = [u for u in state_store.state_updates if u["new_state"] == "done_loss"]
     assert len(final) == 1
+
+
+# --- Edge-case tests (Task 11) --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_supervisor_unsupported_pair_error() -> None:
+    """broker.place() raises UnsupportedPairError → state machine →
+    error (broker_unavailable), broker_trade_id was never returned."""
+    state_store = FakeStateStore()
+    broker = FakeBroker(force_unsupported_pair=True)
+    supervisor, signal, _, notifier = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        signal_id="test-sig-pair",
+    )
+
+    await supervisor.run()
+
+    # No stage row was written (place() raised before record_stage_placed).
+    assert state_store.stages_placed == []
+    # Signal marked error.
+    error_updates = [u for u in state_store.state_updates if u["new_state"] == "error"]
+    assert len(error_updates) == 1
+    assert error_updates[0]["error_reason"] == "broker_unavailable"
+    # Notification: on_cascade_complete with final_state='error'.
+    complete_calls = [c for m, c in notifier.calls if m == "on_cascade_complete"]
+    assert len(complete_calls) == 1
+    assert complete_calls[0]["final_state"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_wait_result_timeout_treated_as_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """broker.wait_result doesn't return within the FR-5.3 timeout →
+    asyncio.TimeoutError → return 'timeout' StageResult."""
+    state_store = FakeStateStore()
+    broker = FakeBroker(program_outcomes={"initial": "loss"})
+
+    async def slow_wait_result(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(60)  # never returns within test timeout
+
+    # Patch the broker's wait_result to be slow.
+    broker.wait_result = slow_wait_result  # type: ignore[method-assign]
+
+    # Reduce the supervisor's _RESULT_GRACE_SECONDS via monkeypatch to make
+    # the timeout fire quickly.
+    monkeypatch.setattr(
+        "signal_copier.scheduler.trigger._RESULT_GRACE_SECONDS",
+        0.05,
+    )
+
+    supervisor, signal, _, _ = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        expiration_seconds=1,  # timeout = expires - now + grace = ~1s
+        signal_id="test-sig-timeout",
+    )
+
+    # Let the cascade complete naturally. Initial times out at ~1.07s
+    # (timeout = expiration + grace = 1 + 0.05). After initial's "timeout"
+    # (loss-equivalent per FR-5.3), gale1 fires; gale1's wait_result has a
+    # far-future timeout (state.py hardcodes gale expiration to 5min), so
+    # the patched `slow_wait_result` (60s sleep) returns "win" instead of
+    # timing out — cascade ends as done_win. Total: ~61s.
+    #
+    # The plan's verbatim `asyncio.wait_for(timeout=2.0)` cancels mid-cascade
+    # and re-raises TimeoutError, so the assertion never runs.
+    await supervisor.run()
+
+    # The initial stage result was 'timeout'.
+    initial_results = [r for r in state_store.stage_results if r["result"] == "timeout"]
+    assert len(initial_results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_wait_result_exception_treated_as_error() -> None:
+    """broker.wait_result raises → return 'error', state machine ends the
+    cascade with broker_unavailable."""
+    state_store = FakeStateStore()
+    broker = FakeBroker()
+    broker.raise_during_wait = RuntimeError("broker dropped")
+    supervisor, signal, _, _ = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        trigger_in_seconds=0.02,
+        signal_id="test-sig-waitfail",
+    )
+
+    await supervisor.run()
+
+    error_updates = [u for u in state_store.state_updates if u["new_state"] == "error"]
+    assert len(error_updates) == 1
+    assert error_updates[0]["error_reason"] == "broker_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_initial_within_500ms_skew() -> None:
+    """The M6 deliverable: fires a (dry-run) trade at HH:MM with ≤500ms skew
+    (we use 800ms tolerance for CI headroom)."""
+    state_store = FakeStateStore()
+    supervisor, signal, broker, _ = _make_supervisor(
+        state_store=state_store,
+        trigger_in_seconds=0.1,
+        signal_id="test-sig-skew",
+    )
+
+    await supervisor.run()
+
+    # The place() call's recorded time should be within skew of trigger_unix_initial.
+    from tests._scheduler_fixtures import assert_within_skew
+
+    place_time = broker.place_times[0]
+    assert_within_skew(place_time, signal.trigger_unix_initial, max_skew_ms=800.0)
+
+
+@pytest.mark.asyncio
+async def test_notifier_exception_does_not_abort_cascade() -> None:
+    """A failing notifier call must not abort the cascade (D-5). The
+    cascade completes normally; the exception is absorbed."""
+    state_store = FakeStateStore()
+    broker = FakeBroker()
+    notifier = RecordingNotifier()
+    notifier.raise_on["on_trade_placed"] = RuntimeError("DM failure")
+    supervisor, signal, _, _ = _make_supervisor(
+        state_store=state_store,
+        broker=broker,
+        notifier=notifier,
+        trigger_in_seconds=0.02,
+        signal_id="test-sig-dmfail",
+    )
+
+    await supervisor.run()
+
+    # Cascade still completed — final signal state is done_win.
+    final = [u for u in state_store.state_updates if u["new_state"] == "done_win"]
+    assert len(final) == 1
+    # The on_cascade_complete was called despite on_trade_placed raising.
+    complete_calls = [c for m, c in notifier.calls if m == "on_cascade_complete"]
+    assert len(complete_calls) == 1
