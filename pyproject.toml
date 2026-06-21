@@ -11,6 +11,7 @@ dependencies = [
     "tzdata>=2024.1",          # IANA tz database on Windows
     "asyncpg>=0.30",           # M4: async PostgreSQL driver
     "telethon>=1.44",          # M5: Telegram MTProto user-account client
+    "loguru>=0.7,<1.0",        # M7: rotating loguru sinks + DM mirror
 ]
 
 [project.scripts]
