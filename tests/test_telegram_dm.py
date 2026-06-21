@@ -130,3 +130,60 @@ async def test_bot_stopping() -> None:
     assert len(fake.sent) == 1
     expected = "🔴 Bot stopping\nOpen cascades: 3"
     assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_trade_placed_initial() -> None:
+    from decimal import Decimal
+
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_trade_placed(
+        signal, stage="initial", amount=Decimal("2.00"), trade_id="abc123"
+    )
+    expected = (
+        "⏱️ Trade placed (INITIAL)\n"
+        "Pair: EUR/JPY\n"
+        "Direction: PUT\n"
+        "Amount: $2.00\n"
+        "Expires: 10:25 (UTC-3)\n"
+        "Trade ID: abc123"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_trade_placed_gale1() -> None:
+    from decimal import Decimal
+
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="up")
+    await notifier.on_trade_placed(signal, stage="gale1", amount=Decimal("4.00"), trade_id="def456")
+    expected = (
+        "⏱️ Trade placed (1st GALE)\n"
+        "Amount: $4.00\n"
+        "Expires: 10:30 (UTC-3)\n"
+        "Triggered by: loss on initial\n"
+        "Trade ID: def456"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_trade_placed_gale2() -> None:
+    from decimal import Decimal
+
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_trade_placed(signal, stage="gale2", amount=Decimal("8.00"), trade_id="ghi789")
+    expected = (
+        "⏱️ Trade placed (2nd GALE)\n"
+        "Amount: $8.00\n"
+        "Expires: 10:35 (UTC-3)\n"
+        "Triggered by: loss on 1st gale\n"
+        "Trade ID: ghi789"
+    )
+    assert fake.sent[0] == expected

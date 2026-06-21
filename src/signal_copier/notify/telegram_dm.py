@@ -17,6 +17,7 @@ from loguru import logger as _loguru_logger
 from signal_copier.config import Config
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import FailureReason, Signal
+from signal_copier.infra.clock import format_local_hhmm
 
 if TYPE_CHECKING:
     from signal_copier.domain.state import TerminalState
@@ -47,6 +48,14 @@ class TelegramDMNotifier:
             return
         _loguru_logger.bind(dm_event=True).info(text)
 
+    def _stage_label(self, stage: Stage) -> str:
+        return {"initial": "INITIAL", "gale1": "1st GALE", "gale2": "2nd GALE"}[stage]
+
+    def _stage_gale_unix(self, signal: Signal, stage: Stage) -> float:
+        """Return trigger_unix for the stage (initial=0, gale1=1, gale2=2)."""
+        index = {"initial": 0, "gale1": 1, "gale2": 2}[stage]
+        return signal.trigger_unix_initial + index * signal.expiration_seconds
+
     # --- Methods below are filled in by Tasks 9-13. ---
 
     async def on_signal_received(self, signal: Signal) -> None:
@@ -64,7 +73,37 @@ class TelegramDMNotifier:
     async def on_trade_placed(
         self, signal: Signal, stage: Stage, amount: Decimal, trade_id: str
     ) -> None:
-        raise NotImplementedError
+        label = self._stage_label(stage)
+        expires_unix = self._stage_gale_unix(signal, stage) + signal.expiration_seconds
+        expires_hhmm = format_local_hhmm(expires_unix, self._config.tz())
+        if stage == "initial":
+            # fmt: off
+            dir_str = "CALL" if signal.direction == "up" else "PUT"
+            text = (
+                f"⏱️ Trade placed ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"Direction: {dir_str}\n"
+                f"Amount: ${amount:.2f}\n"
+                f"Expires: {expires_hhmm} (UTC-3)\n"
+                f"Trade ID: {trade_id}"
+            )
+            # fmt: on
+        else:
+            triggered_by = (
+                "Triggered by: loss on initial"
+                if stage == "gale1"
+                else "Triggered by: loss on 1st gale"
+            )
+            # fmt: off
+            text = (
+                f"⏱️ Trade placed ({label})\n"
+                f"Amount: ${amount:.2f}\n"
+                f"Expires: {expires_hhmm} (UTC-3)\n"
+                f"{triggered_by}\n"
+                f"Trade ID: {trade_id}"
+            )
+            # fmt: on
+        await self._send(text)
 
     async def on_win(
         self, signal: Signal, stage: Stage, pnl: Decimal, cumulative_pnl: Decimal
