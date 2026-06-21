@@ -22,8 +22,8 @@ from typing import Any
 from signal_copier.broker.base import Broker, UnsupportedPairError
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
-from signal_copier.domain.state import StageResult, TerminalState
-from signal_copier.infra.db_rows import DailySummaryRow
+from signal_copier.domain.state import AllStates, ErrorReason, StageResult, TerminalState
+from signal_copier.infra.db_rows import DailySummaryRow, SignalRow
 from signal_copier.notify.protocol import Notifier
 
 
@@ -280,3 +280,172 @@ def make_daily_summary(
         realized_pnl=realized_pnl,
         limit_hit=limit_hit,
     )
+
+
+@dataclass(slots=True)
+class FakeStateStore:
+    """In-memory replacement for StateStore. Lets tests pre-populate
+    signals and daily_summary rows, and records all writes.
+
+    Mirrors M3's fake-broker pattern + M5's FakeStateStore pattern.
+    """
+
+    # Pre-populated rows (test setup).
+    signals: dict[str, SignalRow] = field(default_factory=dict)
+    daily_summaries: dict[date, DailySummaryRow] = field(default_factory=dict)
+
+    # Recorded writes (test assertions).
+    upserted: list[Signal] = field(default_factory=list)
+    state_updates: list[dict[str, Any]] = field(default_factory=list)
+    stages_placed: list[dict[str, Any]] = field(default_factory=list)
+    stage_results: list[dict[str, Any]] = field(default_factory=list)
+    daily_updates: list[dict[str, Any]] = field(default_factory=list)
+
+    async def upsert_signal(self, signal: Signal) -> bool:
+        self.upserted.append(signal)
+        return True
+
+    async def get_signal(self, signal_id: str) -> SignalRow | None:
+        return self.signals.get(signal_id)
+
+    async def update_signal_state(
+        self,
+        signal_id: str,
+        new_state: AllStates,
+        *,
+        error_reason: ErrorReason | None = None,
+        updated_at_unix: float,
+    ) -> None:
+        self.state_updates.append(
+            {
+                "signal_id": signal_id,
+                "new_state": new_state,
+                "error_reason": error_reason,
+                "updated_at_unix": updated_at_unix,
+            }
+        )
+        # Update in-memory copy so subsequent get_signal reflects new state.
+        row = self.signals.get(signal_id)
+        if row is not None:
+            self.signals[signal_id] = SignalRow(
+                signal_id=row.signal_id,
+                pair=row.pair,
+                broker_pair=row.broker_pair,
+                broker_category=row.broker_category,
+                direction=row.direction,
+                trigger_hhmm=row.trigger_hhmm,
+                trigger_ts_unix=row.trigger_ts_unix,
+                expiration_seconds=row.expiration_seconds,
+                received_at_unix=row.received_at_unix,
+                source_message_id=row.source_message_id,
+                source_chat_id=row.source_chat_id,
+                raw_text=row.raw_text,
+                status=new_state,
+                error_reason=error_reason,
+                created_at_unix=row.created_at_unix,
+                updated_at_unix=updated_at_unix,
+            )
+
+    async def record_stage_placed(
+        self,
+        signal_id: str,
+        stage: Stage,
+        *,
+        pair: str,
+        direction: str,
+        amount: Decimal,
+        placed_at_unix: float,
+        expires_at_unix: float,
+        broker_trade_id: str | None = None,
+    ) -> str:
+        # Use the same deterministic derivation as the real StateStore.
+        import hashlib
+
+        payload = f"{signal_id}|{stage}|{placed_at_unix:.6f}"
+        trade_id = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+        self.stages_placed.append(
+            {
+                "signal_id": signal_id,
+                "stage": stage,
+                "trade_id": trade_id,
+                "pair": pair,
+                "direction": direction,
+                "amount": amount,
+                "placed_at_unix": placed_at_unix,
+                "expires_at_unix": expires_at_unix,
+                "broker_trade_id": broker_trade_id,
+            }
+        )
+        return trade_id
+
+    async def record_stage_result(
+        self,
+        trade_id: str,
+        result: StageResult,
+        *,
+        pnl: Decimal,
+        closed_at_unix: float,
+    ) -> None:
+        self.stage_results.append(
+            {
+                "trade_id": trade_id,
+                "result": result,
+                "pnl": pnl,
+                "closed_at_unix": closed_at_unix,
+            }
+        )
+
+    async def update_daily_summary(
+        self,
+        on_date: date,
+        *,
+        signals_count_delta: int = 0,
+        trades_count_delta: int = 0,
+        wins_delta: int = 0,
+        losses_delta: int = 0,
+        realized_pnl_delta: Decimal = Decimal("0"),
+        limit_hit: str | None = None,
+    ) -> None:
+        self.daily_updates.append(
+            {
+                "on_date": on_date,
+                "signals_count_delta": signals_count_delta,
+                "trades_count_delta": trades_count_delta,
+                "wins_delta": wins_delta,
+                "losses_delta": losses_delta,
+                "realized_pnl_delta": realized_pnl_delta,
+                "limit_hit": limit_hit,
+            }
+        )
+        # Mutate the in-memory row.
+        existing = self.daily_summaries.get(on_date)
+        if existing is None:
+            self.daily_summaries[on_date] = DailySummaryRow(
+                date=on_date,
+                signals_count=signals_count_delta,
+                trades_count=trades_count_delta,
+                wins=wins_delta,
+                losses=losses_delta,
+                realized_pnl=realized_pnl_delta,
+                limit_hit=limit_hit,
+            )
+        else:
+            self.daily_summaries[on_date] = DailySummaryRow(
+                date=existing.date,
+                signals_count=existing.signals_count + signals_count_delta,
+                trades_count=existing.trades_count + trades_count_delta,
+                wins=existing.wins + wins_delta,
+                losses=existing.losses + losses_delta,
+                realized_pnl=existing.realized_pnl + realized_pnl_delta,
+                limit_hit=limit_hit if limit_hit is not None else existing.limit_hit,
+            )
+
+    async def get_daily_summary(self, on_date: date) -> DailySummaryRow | None:
+        return self.daily_summaries.get(on_date)
+
+    async def get_active_signals(self) -> list[SignalRow]:
+        return [
+            r
+            for r in self.signals.values()
+            if r.status in {"placed_initial", "placed_gale1", "placed_gale2"}
+        ]

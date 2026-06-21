@@ -11,13 +11,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from signal_copier.config import Config
 from signal_copier.scheduler.trigger import Scheduler, compute_target_monotonic
-from tests._scheduler_fixtures import FakeBroker, RecordingNotifier
+from tests._scheduler_fixtures import (
+    FakeBroker,
+    FakeStateStore,
+    RecordingNotifier,
+    make_daily_summary,
+    make_signal_with_future_trigger,
+)
 
 
 def test_compute_target_monotonic_future_target_returns_monotonic_anchor() -> None:
@@ -192,3 +199,261 @@ async def test_scheduler_cancellation_propagates_to_supervisors() -> None:
     task.cancel()
     # Give the scheduler's CancelledError handler time to cancel supervisors.
     await asyncio.wait_for(supervise_cancelled.wait(), timeout=2.0)
+
+
+# --- SignalSupervisor intake tests (Task 8) ------------------------------
+
+
+async def _no_op_drive_cascade(state: Any) -> None:
+    return None
+
+
+def _make_supervisor(
+    *,
+    state_store: FakeStateStore,
+    broker: FakeBroker | None = None,
+    notifier: RecordingNotifier | None = None,
+    config: Config | None = None,
+    trigger_in_seconds: float = 0.05,
+    signal_id: str = "test-sig-1",
+):
+    """Build a SignalSupervisor ready to run. We DON'T run the scheduler;
+    we run the supervisor directly via `await supervisor.run()`."""
+    from signal_copier.scheduler.trigger import SignalSupervisor
+
+    broker = broker or FakeBroker()
+    notifier = notifier or RecordingNotifier()
+    config = config or Config()
+    signal = make_signal_with_future_trigger(
+        trigger_in_seconds=trigger_in_seconds,
+        signal_id=signal_id,
+    )
+    supervisor = SignalSupervisor(
+        signal=signal,
+        broker=broker,
+        state_store=state_store,  # type: ignore[arg-type]
+        notifier=notifier,
+        config=config,
+    )
+    return supervisor, signal, broker, notifier
+
+
+@pytest.mark.asyncio
+async def test_supervisor_emits_on_signal_received_for_fresh_signal() -> None:
+    """A fresh signal (not in signals table) gets on_signal_received."""
+    state_store = FakeStateStore()
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+    )
+    # Stub the cascade so the supervisor exits after intake (Task 9 wires
+    # the real _drive_cascade; here we patch it to a no-op).
+    supervisor._drive_cascade = _no_op_drive_cascade  # type: ignore[method-assign]
+
+    await supervisor.run()
+
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_received" in method_names
+    assert method_names.index("on_signal_received") == 0  # first event
+
+
+@pytest.mark.asyncio
+async def test_supervisor_skips_duplicate_signal_at_intake() -> None:
+    """If signals.status for the signal_id is non-pending (already mid-cascade
+    from another supervisor or restart), the supervisor exits without doing
+    anything (D-11)."""
+    state_store = FakeStateStore()
+    from signal_copier.infra.db_rows import SignalRow
+
+    state_store.signals["test-sig-1"] = SignalRow(
+        signal_id="test-sig-1",
+        pair="EUR/JPY",
+        broker_pair=None,
+        broker_category=None,
+        direction="down",
+        trigger_hhmm="00:00",
+        trigger_ts_unix=0.0,
+        expiration_seconds=300,
+        received_at_unix=0.0,
+        source_message_id=1,
+        source_chat_id=1,
+        raw_text="(old)",
+        status="placed_initial",
+        error_reason=None,
+        created_at_unix=0.0,
+        updated_at_unix=0.0,
+    )
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        signal_id="test-sig-1",
+    )
+
+    await supervisor.run()
+
+    # No notifier calls (no on_signal_received, no nothing).
+    assert notifier.calls == []
+    # No broker interactions.
+    assert broker.place_calls == []
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rejects_signal_when_daily_loss_limit_hit(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When DAILY_LOSS_LIMIT > 0 and the day's realized_pnl <= -limit,
+    the signal is marked error (daily_limit_hit) and broker.place() is
+    not called."""
+    # Build a Config with DAILY_LOSS_LIMIT=50, no Telegram creds needed.
+    monkeypatch.setenv("DAILY_LOSS_LIMIT", "50.00")
+    monkeypatch.setenv("DAILY_TRADE_LIMIT", "0")
+    monkeypatch.setenv("DAILY_DRAWDOWN_PCT", "0")
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "log"))
+    config = Config()
+
+    state_store = FakeStateStore()
+    today = make_signal_with_future_trigger(
+        trigger_in_seconds=0.05,
+        signal_id="test-sig-loss",
+    ).received_at_unix
+    from datetime import datetime
+
+    today_date = datetime.fromtimestamp(today, tz=config.tz()).date()
+    state_store.daily_summaries[today_date] = make_daily_summary(
+        date_value=today_date,
+        losses=10,
+        trades_count=10,
+        realized_pnl=Decimal("-60.00"),
+    )
+
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        config=config,
+        signal_id="test-sig-loss",
+    )
+
+    await supervisor.run()
+
+    # Broker was NOT called.
+    assert broker.place_calls == []
+    # Signal marked error with daily_limit_hit.
+    assert any(
+        u["new_state"] == "error" and u["error_reason"] == "daily_limit_hit"
+        for u in state_store.state_updates
+    )
+    # Notification fired.
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_rejected_by_limit" in method_names
+    rejection_call = next(c for m, c in notifier.calls if m == "on_signal_rejected_by_limit")
+    assert rejection_call["limit_type"] == "loss"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rejects_signal_when_daily_trade_limit_hit(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When DAILY_TRADE_LIMIT > 0 and trades_count >= limit, reject."""
+    monkeypatch.setenv("DAILY_LOSS_LIMIT", "0")
+    monkeypatch.setenv("DAILY_TRADE_LIMIT", "5")
+    monkeypatch.setenv("DAILY_DRAWDOWN_PCT", "0")
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "log"))
+    config = Config()
+
+    state_store = FakeStateStore()
+    today = make_signal_with_future_trigger(
+        trigger_in_seconds=0.05,
+        signal_id="test-sig-count",
+    ).received_at_unix
+    from datetime import datetime
+
+    today_date = datetime.fromtimestamp(today, tz=config.tz()).date()
+    state_store.daily_summaries[today_date] = make_daily_summary(
+        date_value=today_date,
+        losses=2,
+        trades_count=5,
+        realized_pnl=Decimal("0.00"),
+    )
+
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        config=config,
+        signal_id="test-sig-count",
+    )
+
+    await supervisor.run()
+
+    assert broker.place_calls == []
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_rejected_by_limit" in method_names
+    rejection_call = next(c for m, c in notifier.calls if m == "on_signal_rejected_by_limit")
+    assert rejection_call["limit_type"] == "count"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rejects_signal_when_daily_drawdown_limit_hit(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When DAILY_DRAWDOWN_PCT > 0 and realized_pnl <= -pct (USD threshold
+    per M6 simplification), reject."""
+    monkeypatch.setenv("DAILY_LOSS_LIMIT", "0")
+    monkeypatch.setenv("DAILY_TRADE_LIMIT", "0")
+    monkeypatch.setenv("DAILY_DRAWDOWN_PCT", "40")
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "log"))
+    config = Config()
+
+    state_store = FakeStateStore()
+    today = make_signal_with_future_trigger(
+        trigger_in_seconds=0.05,
+        signal_id="test-sig-dd",
+    ).received_at_unix
+    from datetime import datetime
+
+    today_date = datetime.fromtimestamp(today, tz=config.tz()).date()
+    state_store.daily_summaries[today_date] = make_daily_summary(
+        date_value=today_date,
+        losses=5,
+        trades_count=5,
+        realized_pnl=Decimal("-50.00"),
+    )
+
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        config=config,
+        signal_id="test-sig-dd",
+    )
+
+    await supervisor.run()
+
+    assert broker.place_calls == []
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_rejected_by_limit" in method_names
+    rejection_call = next(c for m, c in notifier.calls if m == "on_signal_rejected_by_limit")
+    assert rejection_call["limit_type"] == "drawdown"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_no_rejection_when_limits_disabled(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default limits are 0 = disabled (FR-6.1/6.2/6.3). No rejection."""
+    monkeypatch.setenv("DAILY_LOSS_LIMIT", "0")
+    monkeypatch.setenv("DAILY_TRADE_LIMIT", "0")
+    monkeypatch.setenv("DAILY_DRAWDOWN_PCT", "0")
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "log"))
+    config = Config()
+
+    state_store = FakeStateStore()
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        config=config,
+        signal_id="test-sig-nolimit",
+    )
+    supervisor._drive_cascade = _no_op_drive_cascade  # type: ignore[method-assign]
+
+    await supervisor.run()
+
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_rejected_by_limit" not in method_names
+    assert "on_signal_received" in method_names
