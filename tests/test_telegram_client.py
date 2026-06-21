@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -135,3 +135,30 @@ async def test_close_is_idempotent_when_not_connected() -> None:
     )
     await client.close()  # before connect
     await client.close()  # again — no-op
+
+
+# --- TelegramClient.send_to_self ------------------------------------------
+
+
+async def test_send_to_self_calls_send_message_with_me() -> None:
+    client = TelegramClient(
+        api_id=1, api_hash="abc", phone="+1", session_string="s", target_chat="@c"
+    )
+    # Inject a fake underlying Telethon client (bypass real connect()).
+    fake_telethon = MagicMock()
+    fake_telethon.send_message = AsyncMock()
+    client._client = fake_telethon  # type: ignore[attr-defined]
+
+    await client.send_to_self("hello")
+
+    fake_telethon.send_message.assert_awaited_once_with("me", "hello")
+
+
+async def test_send_to_self_raises_before_connect() -> None:
+    client = TelegramClient(
+        api_id=1, api_hash="abc", phone="+1", session_string="s", target_chat="@c"
+    )
+    with pytest.raises(RuntimeError, match="connect"):
+        # send_to_self is async, so the body (and its RuntimeError) only
+        # runs when awaited — unlike the sync add_message_handler check.
+        await client.send_to_self("hello")

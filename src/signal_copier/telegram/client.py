@@ -150,6 +150,18 @@ class TelegramClient:
                 )
                 await asyncio.sleep(delay)
 
+    async def send_to_self(self, text: str) -> None:
+        """Send a Telegram DM to the user's own 'Saved Messages' chat.
+
+        Uses the same connection as the listener (FR-7.4). Plain text
+        only — no parse_mode. Raises whatever Telethon's send_message
+        raises (FloodWaitError, ConnectionError, OSError); callers
+        (TelegramDMNotifier._send) are responsible for handling.
+        """
+        if self._client is None:
+            raise RuntimeError("send_to_self() called before connect()")
+        await self._client.send_message("me", text)
+
     async def close(self) -> None:
         if self._client is None:
             return
