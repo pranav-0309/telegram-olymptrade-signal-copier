@@ -186,7 +186,38 @@ class TelegramDMNotifier:
         await self._send(text)
 
     async def on_signal_expired(self, signal: Signal, stage: Stage, trigger_hhmm: str) -> None:
-        raise NotImplementedError
+        label = self._stage_label(stage)
+        if stage == "initial":
+            # fmt: off
+            text = (
+                f"⏰ Signal EXPIRED ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"Trigger was: {trigger_hhmm} (UTC-3)\n"
+                f"Reason: time window passed before fire\n"
+                f"Action: no trades placed; signal invalid"
+            )
+            # fmt: on
+        elif stage == "gale1":
+            # fmt: off
+            text = (
+                f"⏰ Signal EXPIRED ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"Gale1 trigger was: {trigger_hhmm} (UTC-3)\n"
+                f"Reason: time window passed before fire\n"
+                f"Action: no gale2 placed — cascade ended"
+            )
+            # fmt: on
+        else:  # gale2
+            # fmt: off
+            text = (
+                f"⏰ Signal EXPIRED ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"Gale2 trigger was: {trigger_hhmm} (UTC-3)\n"
+                f"Reason: time window passed before fire\n"
+                f"Action: cascade ended, no recovery attempted"
+            )
+            # fmt: on
+        await self._send(text)
 
     async def on_cascade_complete(
         self,

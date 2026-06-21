@@ -344,3 +344,51 @@ async def test_loss_initial_uses_configured_gale_amount() -> None:
     # Must show $5.00, not the hardcoded $4.00 default
     assert "$5.00" in fake.sent[0]
     assert "$4.00" not in fake.sent[0]
+
+
+@pytest.mark.asyncio
+async def test_signal_expired_initial() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_signal_expired(signal, stage="initial", trigger_hhmm="10:20")
+    expected = (
+        "⏰ Signal EXPIRED (INITIAL)\n"
+        "Pair: EUR/JPY\n"
+        "Trigger was: 10:20 (UTC-3)\n"
+        "Reason: time window passed before fire\n"
+        "Action: no trades placed; signal invalid"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_signal_expired_gale1() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_signal_expired(signal, stage="gale1", trigger_hhmm="10:25")
+    expected = (
+        "⏰ Signal EXPIRED (1st GALE)\n"
+        "Pair: EUR/JPY\n"
+        "Gale1 trigger was: 10:25 (UTC-3)\n"
+        "Reason: time window passed before fire\n"
+        "Action: no gale2 placed — cascade ended"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_signal_expired_gale2() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_signal_expired(signal, stage="gale2", trigger_hhmm="10:30")
+    expected = (
+        "⏰ Signal EXPIRED (2nd GALE)\n"
+        "Pair: EUR/JPY\n"
+        "Gale2 trigger was: 10:30 (UTC-3)\n"
+        "Reason: time window passed before fire\n"
+        "Action: cascade ended, no recovery attempted"
+    )
+    assert fake.sent[0] == expected
