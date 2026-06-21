@@ -165,7 +165,7 @@ class NoOpNotifier:
         next_stage: Stage | None,
     ) -> None:
         _log.info(
-            "notify: event=loss signal_id=%s stage=%s pnl=%s cumulative_pnl=%s " "next_stage=%s",
+            "notify: event=loss signal_id=%s stage=%s pnl=%s cumulative_pnl=%s next_stage=%s",
             signal.signal_id,
             stage,
             pnl,
@@ -193,7 +193,7 @@ class NoOpNotifier:
         cumulative_pnl: Decimal,
     ) -> None:
         _log.info(
-            "notify: event=cascade_complete signal_id=%s final_state=%s " "cumulative_pnl=%s",
+            "notify: event=cascade_complete signal_id=%s final_state=%s cumulative_pnl=%s",
             signal.signal_id,
             final_state,
             cumulative_pnl,

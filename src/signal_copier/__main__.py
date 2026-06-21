@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from signal_copier.broker.base import Broker
 from signal_copier.broker.dry_run import DryRunBroker
 from signal_copier.config import Config
+from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
 from signal_copier.infra.log import setup_logging, setup_parse_failures_log
 from signal_copier.notify.protocol import NoOpNotifier
@@ -46,7 +47,7 @@ async def _run(config: Config) -> int:
         broker = DryRunBroker()
         await broker.connect()
 
-        signals_queue: asyncio.Queue = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
+        signals_queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
         parse_failures = setup_parse_failures_log(config.log_path.parent)
 
         listener = Listener(
@@ -98,13 +99,12 @@ async def _run(config: Config) -> int:
                 raise exc
         return 0
     finally:
-        for task in (scheduler_task, telegram_task):
-            if task is not None and not task.done():
-                task.cancel()
-        for task in (scheduler_task, telegram_task):
-            if task is not None:
+        for bg_task in (scheduler_task, telegram_task):
+            if bg_task is not None:
+                if not bg_task.done():
+                    bg_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await task
+                    await bg_task
         if scheduler is not None:
             await notifier.on_bot_stopping(
                 open_cascades=scheduler.active_task_count,
