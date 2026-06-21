@@ -18,8 +18,12 @@ import contextlib
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger as _loguru_logger
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 # Module-level state to track the parse-failures loguru sink id,
 # so repeated setup_parse_failures_log() calls don't accumulate sinks.
@@ -34,7 +38,7 @@ def setup_logging(log_path: Path) -> None:
     every ``logging.getLogger(name).info(...)`` call flows through loguru.
     """
 
-    def _not_parse_failure(record) -> bool:
+    def _not_parse_failure(record: Record) -> bool:
         return not record["extra"].get("parse_failure", False)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,10 +118,14 @@ class _InterceptHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            level = _loguru_logger.level(record.levelname).name
+            level: str | int = _loguru_logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-        _loguru_logger.patch(lambda r: r.update(name=record.name)).opt(
+        # TypedDict's update() rejects arbitrary kwargs at type-check time, but
+        # loguru intentionally lets patchers mutate the record dict in place
+        # (see loguru docs: "lambda r: r.update(function=func.__name__)"). Cast
+        # to a plain dict so the call type-checks.
+        _loguru_logger.patch(lambda r: cast("dict[str, Any]", r).update(name=record.name)).opt(
             depth=6, exception=record.exc_info
         ).log(level, record.getMessage())
 

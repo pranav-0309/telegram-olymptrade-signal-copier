@@ -34,7 +34,7 @@ async def db(pg_dsn: str) -> AsyncIterator[Database]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_parse_failures_logger() -> Generator[None, None, None]:
+def _reset_parse_failures_logger() -> Generator[None]:
     """Clear the parse-failures logger's handlers before each test.
 
     `logging.getLogger()` returns a process-wide singleton, so without
