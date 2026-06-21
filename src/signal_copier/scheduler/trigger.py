@@ -21,8 +21,9 @@ import logging
 from collections.abc import Awaitable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from signal_copier.broker.base import UnsupportedPairError
 from signal_copier.config import Config
 from signal_copier.domain.gale import Stage, amount_for_stage  # noqa: F401  (Stage used later)
 from signal_copier.domain.signal import Signal
@@ -42,6 +43,18 @@ if TYPE_CHECKING:
     from signal_copier.infra.state_store import StateStore
 
 _log = logging.getLogger(__name__)
+
+
+# StageResult-grace timeout per PRD FR-5.3: expiration_seconds + 30s.
+_RESULT_GRACE_SECONDS: float = 30.0
+
+
+# Stage → (signal.trigger_unix_* field name) mapping for the schedule targets.
+_STAGE_TO_TRIGGER_ATTR: dict[Stage, str] = {
+    "initial": "trigger_unix_initial",
+    "gale1": "trigger_unix_gale1",
+    "gale2": "trigger_unix_gale2",
+}
 
 
 def compute_target_monotonic(target_wall_unix: float) -> float:
@@ -209,8 +222,334 @@ class SignalSupervisor:
         await self._drive_cascade(state)
 
     async def _drive_cascade(self, initial_state: SignalState) -> None:
-        """Stub for now. Tasks 9-14 wire the full cascade loop."""
-        raise NotImplementedError("_drive_cascade — see Tasks 9-14")
+        """Run the cascade from `initial_state` until terminal or error.
+
+        Each iteration:
+          a. Schedule the next call_at for state.stage's trigger_unix.
+          b. Wait for the call_at callback to fire (via asyncio.Future).
+          c. Dispatch FireEvent to the state machine — ONLY when state is
+             `pending`. After a loss transition, the state machine advances
+             to `placed_<next>` directly (via _to_placed), so the fire has
+             already happened conceptually; we just proceed to broker.place().
+          d. Place the trade via broker.place().
+          e. Wait for the result via broker.wait_result().
+          f. Apply the result via _apply_result_and_finalize().
+          g. Re-check state — if terminal, exit; otherwise loop to next stage.
+        """
+        state = initial_state
+        loop = asyncio.get_running_loop()
+
+        while state.stage is not None:
+            # a. Schedule the next fire.
+            stage = state.stage
+            target_wall = getattr(self._signal, _STAGE_TO_TRIGGER_ATTR[stage])
+            target_mono = compute_target_monotonic(target_wall)
+
+            # D-17: negative delta at intake → fire immediately with stale now.
+            fired = loop.create_future()
+            try:
+                loop.call_at(target_mono, fired.set_result, True)
+            except Exception:  # pragma: no cover — defensive
+                _log.exception(
+                    "call_at failed: signal_id=%s stage=%s",
+                    self._signal.signal_id,
+                    stage,
+                )
+                return
+
+            try:
+                await fired
+            except asyncio.CancelledError:
+                raise
+
+            # c. Dispatch FireEvent — only when state is pending. After a
+            # loss, _advance_after_result transitions placed_X → placed_<next>
+            # directly, so the next iteration's FireEvent would be invalid.
+            if state.state == "pending":
+                now_wall = now_unix()
+                result = transition(
+                    state,
+                    FireEvent(now_unix=now_wall),
+                    config=self._config,
+                )
+                if not result.success or result.new_state is None:
+                    _log.error(
+                        "FireEvent failed: signal_id=%s stage=%s reason=%s",
+                        self._signal.signal_id,
+                        stage,
+                        result.reason,
+                    )
+                    return
+                state = result.new_state
+
+                # Persist the state transition.
+                await self._state_store.update_signal_state(
+                    signal_id=self._signal.signal_id,
+                    new_state=state.state,
+                    error_reason=state.error_reason,
+                    updated_at_unix=now_unix(),
+                )
+
+                # If the FireEvent drove us to error (signal_expired), notify and exit.
+                if state.state == "error":
+                    await self._safe_notify(
+                        self._notifier.on_signal_expired(
+                            self._signal,
+                            stage=stage,
+                            trigger_hhmm=self._signal.trigger_hhmm,
+                        )
+                    )
+                    await self._safe_notify(
+                        self._notifier.on_cascade_complete(
+                            self._signal,
+                            final_state="error",
+                            cumulative_pnl=state.cumulative_pnl,
+                        )
+                    )
+                    return
+
+            # d. Place the trade. Capture amount BEFORE place() — after the
+            # ResultEvent transition, terminal states have amount=Decimal("0").
+            placed_amount = state.amount
+            placed_at = now_unix()
+            try:
+                broker_trade_id = await self._broker.place(
+                    self._signal,
+                    stage=stage,
+                    amount=placed_amount,
+                )
+            except UnsupportedPairError as exc:
+                _log.warning(
+                    "broker rejected pair: signal_id=%s pair=%s exc=%s",
+                    self._signal.signal_id,
+                    self._signal.pair,
+                    exc,
+                )
+                # D-4: translate broker exception into state machine's
+                # vocabulary (ResultEvent("error")). No trade_id exists.
+                await self._apply_error_transition(
+                    state,
+                    stage,
+                    "error",
+                    placed_amount,
+                )
+                return
+
+            # Persist the stage row. record_stage_placed returns the
+            # deterministic trade_id used by record_stage_result later.
+            db_trade_id = await self._state_store.record_stage_placed(
+                signal_id=self._signal.signal_id,
+                stage=stage,
+                pair=self._signal.pair,
+                direction=self._signal.direction,
+                amount=placed_amount,
+                placed_at_unix=placed_at,
+                expires_at_unix=state.expires_at_unix,
+                broker_trade_id=broker_trade_id,
+            )
+            await self._safe_notify(
+                self._notifier.on_trade_placed(
+                    self._signal,
+                    stage=stage,
+                    amount=placed_amount,
+                    trade_id=db_trade_id,
+                )
+            )
+
+            # e. Wait for the result.
+            stage_result = await self._wait_for_stage_result(broker_trade_id, state)
+
+            # f. Apply the result; returns the new (possibly terminal) state.
+            state = await self._apply_result_and_finalize(
+                state,
+                stage,
+                stage_result,
+                placed_amount,
+                db_trade_id,
+            )
+            # While-loop guard re-checks state.stage next iteration; if the
+            # state is terminal (done_win/done_loss/error) the loop exits.
+
+    async def _apply_result_and_finalize(
+        self,
+        state: SignalState,
+        stage: Stage,
+        stage_result: StageResult,
+        placed_amount: Decimal,
+        trade_id: str,
+    ) -> SignalState:
+        """Dispatch a ResultEvent to the state machine; persist + notify.
+
+        Returns the new (possibly terminal) SignalState. The caller uses
+        the return value to update its loop variable.
+        """
+        now_wall = now_unix()
+        result = transition(
+            state,
+            ResultEvent(result=stage_result, now_unix=now_wall),
+            config=self._config,
+        )
+        if not result.success or result.new_state is None:
+            _log.error(
+                "ResultEvent failed: signal_id=%s stage=%s result=%s reason=%s",
+                self._signal.signal_id,
+                stage,
+                stage_result,
+                result.reason,
+            )
+            return state
+
+        new_state = result.new_state
+
+        await self._state_store.record_stage_result(
+            trade_id=trade_id,
+            result=stage_result,
+            pnl=self._compute_stage_pnl_for_result(stage_result, placed_amount),
+            closed_at_unix=now_wall,
+        )
+        await self._state_store.update_signal_state(
+            signal_id=self._signal.signal_id,
+            new_state=new_state.state,
+            error_reason=new_state.error_reason,
+            updated_at_unix=now_wall,
+        )
+        await self._state_store.update_daily_summary(
+            on_date=self._signal_date(),
+            signals_count_delta=0,
+            trades_count_delta=1,
+            wins_delta=1 if stage_result == "win" else 0,
+            losses_delta=1 if stage_result in {"loss", "tie", "timeout"} else 0,
+            realized_pnl_delta=self._compute_stage_pnl_for_result(
+                stage_result,
+                placed_amount,
+            ),
+        )
+
+        if stage_result == "win":
+            await self._safe_notify(
+                self._notifier.on_win(
+                    self._signal,
+                    stage=stage,
+                    pnl=self._compute_stage_pnl_for_result(stage_result, placed_amount),
+                    cumulative_pnl=new_state.cumulative_pnl,
+                )
+            )
+        elif stage_result in {"loss", "tie", "timeout"}:
+            await self._safe_notify(
+                self._notifier.on_loss(
+                    self._signal,
+                    stage=stage,
+                    pnl=-placed_amount,
+                    cumulative_pnl=new_state.cumulative_pnl,
+                    next_stage=new_state.stage,
+                )
+            )
+        # stage_result == "error" → on_cascade_complete handles it.
+
+        if new_state.state in {"done_win", "done_loss", "done_tie", "error"}:
+            await self._safe_notify(
+                self._notifier.on_cascade_complete(
+                    self._signal,
+                    final_state=cast(TerminalState, new_state.state),
+                    cumulative_pnl=new_state.cumulative_pnl,
+                )
+            )
+
+        return new_state
+
+    async def _apply_error_transition(
+        self,
+        state: SignalState,
+        stage: Stage,
+        stage_result: StageResult,
+        placed_amount: Decimal,
+    ) -> SignalState:
+        """Variant of _apply_result_and_finalize for the no-trade-id path
+        (UnsupportedPairError raised before trade_id was returned).
+        """
+        now_wall = now_unix()
+        result = transition(
+            state,
+            ResultEvent(result=stage_result, now_unix=now_wall),
+            config=self._config,
+        )
+        if not result.success or result.new_state is None:
+            _log.error(
+                "ResultEvent (error path) failed: signal_id=%s stage=%s reason=%s",
+                self._signal.signal_id,
+                stage,
+                result.reason,
+            )
+            return state
+
+        new_state = result.new_state
+
+        # No record_stage_result: no stage row was written (place() raised
+        # before returning a trade_id).
+        await self._state_store.update_signal_state(
+            signal_id=self._signal.signal_id,
+            new_state=new_state.state,
+            error_reason=new_state.error_reason,
+            updated_at_unix=now_wall,
+        )
+        await self._safe_notify(
+            self._notifier.on_cascade_complete(
+                self._signal,
+                final_state=cast(TerminalState, new_state.state),
+                cumulative_pnl=new_state.cumulative_pnl,
+            )
+        )
+        return new_state
+
+    async def _wait_for_stage_result(
+        self,
+        broker_trade_id: str,
+        state: SignalState,
+    ) -> StageResult:
+        """Wrap broker.wait_result in asyncio.wait_for with the FR-5.3 timeout.
+
+        On TimeoutError: return 'timeout' (treated as loss-equivalent).
+        On any other broker exception: return 'error' (state machine ends
+        the cascade with broker_unavailable).
+        """
+        timeout = max(
+            0.1,
+            state.expires_at_unix - now_unix() + _RESULT_GRACE_SECONDS,
+        )
+        try:
+            return await asyncio.wait_for(
+                self._broker.wait_result(broker_trade_id, timeout=timeout),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            _log.warning(
+                "broker.wait_result timeout: trade_id=%s timeout=%.1fs",
+                broker_trade_id,
+                timeout,
+            )
+            return "timeout"
+        except Exception as exc:  # noqa: BLE001 — map to error per D-5
+            _log.warning(
+                "broker.wait_result error: trade_id=%s exc=%s",
+                broker_trade_id,
+                exc,
+            )
+            return "error"
+
+    def _compute_stage_pnl_for_result(
+        self,
+        result: StageResult,
+        amount: Decimal,
+    ) -> Decimal:
+        """Mirror state.py's _stage_pnl — duplicated here so M6's DB writes
+        don't depend on importing state machine internals. Matches the
+        v1 approximation (92% payout for win; full loss for loss/tie/timeout).
+        M8 will replace with broker-reported PnL."""
+        if result == "win":
+            return amount * Decimal("0.92")
+        if result in {"loss", "tie", "timeout"}:
+            return -amount
+        return Decimal("0.00")  # 'error' contributes nothing
 
     async def _check_daily_limit(self) -> str | None:
         """Return 'loss' | 'count' | 'drawdown' if a daily limit is hit;

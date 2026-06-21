@@ -457,3 +457,69 @@ async def test_supervisor_no_rejection_when_limits_disabled(
     method_names = [m for m, _ in notifier.calls]
     assert "on_signal_rejected_by_limit" not in method_names
     assert "on_signal_received" in method_names
+
+
+# --- _drive_cascade tests (Task 9) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_supervisor_initial_signal_expired_at_fire_time() -> None:
+    """A signal whose trigger_unix_initial is already 5 seconds in the past
+    causes compute_target_monotonic to return `loop.time()`. The FireEvent
+    is dispatched immediately with now_unix >> trigger_unix, so the state
+    machine transitions to error (signal_expired). No broker.place() call."""
+    state_store = FakeStateStore()
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        trigger_in_seconds=-5.0,  # already past
+        signal_id="test-sig-expired",
+    )
+
+    await supervisor.run()
+
+    # No broker interaction.
+    assert broker.place_calls == []
+    # Signal marked error with signal_expired.
+    error_updates = [u for u in state_store.state_updates if u["new_state"] == "error"]
+    assert len(error_updates) >= 1
+    assert error_updates[-1]["error_reason"] == "signal_expired"
+    # Notification fired: on_signal_expired + on_cascade_complete.
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_expired" in method_names
+    assert "on_cascade_complete" in method_names
+
+
+@pytest.mark.asyncio
+async def test_supervisor_initial_win_terminal() -> None:
+    """Happy path: initial trigger fires, broker.place() returns trade_id,
+    wait_result returns 'win', state machine → done_win, terminal."""
+    state_store = FakeStateStore()
+    supervisor, signal, broker, notifier = _make_supervisor(
+        state_store=state_store,
+        trigger_in_seconds=0.05,
+        signal_id="test-sig-win",
+    )
+    # FakeBroker default_outcome='win' so wait_result returns 'win'.
+
+    await supervisor.run()
+
+    # Broker was called once for stage='initial' with amount=$2.
+    assert len(broker.place_calls) == 1
+    _, stage, amount = broker.place_calls[0]
+    assert stage == "initial"
+    assert amount == Decimal("2.00")
+    # Stage row written.
+    assert len(state_store.stages_placed) == 1
+    assert state_store.stages_placed[0]["stage"] == "initial"
+    # Stage result written.
+    assert len(state_store.stage_results) == 1
+    assert state_store.stage_results[0]["result"] == "win"
+    # Final signal state: done_win.
+    final_updates = [u for u in state_store.state_updates if u["new_state"] == "done_win"]
+    assert len(final_updates) == 1
+    # Notifications: on_signal_received, on_trade_placed, on_win, on_cascade_complete.
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_signal_received" in method_names
+    assert "on_trade_placed" in method_names
+    assert "on_win" in method_names
+    assert "on_cascade_complete" in method_names
