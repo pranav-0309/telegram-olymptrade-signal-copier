@@ -40,7 +40,7 @@ def is_within_window(
 def format_local_hhmm(unix_ts: float, tz: ZoneInfo) -> str:
     """Format a Unix epoch as 'HH:MM' in the given timezone.
 
-    Example: 1740000000 in America/Sao_Paulo → '10:20'.
+    Example: 1739971200 in America/Sao_Paulo → '10:20'.
     Used by the M7 notifier to render timestamps for self-DMs.
     """
     dt = datetime.fromtimestamp(unix_ts, tz=tz)
