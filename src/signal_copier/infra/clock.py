@@ -37,6 +37,16 @@ def is_within_window(
     return (now_unix - past_tolerance) <= trigger_unix <= (now_unix + future_tolerance)
 
 
+def format_local_hhmm(unix_ts: float, tz: ZoneInfo) -> str:
+    """Format a Unix epoch as 'HH:MM' in the given timezone.
+
+    Example: 1740000000 in America/Sao_Paulo → '10:20'.
+    Used by the M7 notifier to render timestamps for self-DMs.
+    """
+    dt = datetime.fromtimestamp(unix_ts, tz=tz)
+    return f"{dt.hour:02d}:{dt.minute:02d}"
+
+
 def now_unix() -> float:
     """Current wall-clock Unix time as a float. Thin wrapper over time.time()."""
     return time.time()

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from signal_copier.infra.clock import (
+    format_local_hhmm,
     hhmm_to_unix,
     is_within_window,
     monotonic,
@@ -129,3 +130,21 @@ def test_monotonic_returns_non_decreasing_values() -> None:
     a = monotonic()
     b = monotonic()
     assert b >= a
+
+
+# --- format_local_hhmm -----------------------------------------------------
+
+
+def test_format_local_hhmm_america_sao_paulo() -> None:
+    """2026-06-21T13:20:00Z is 10:20 in America/Sao_Paulo (UTC-3, no DST)."""
+    tz = ZoneInfo("America/Sao_Paulo")
+    # 13:20 UTC == 10:20 BRT
+    unix_ts = datetime(2026, 6, 21, 13, 20, 0, tzinfo=ZoneInfo("UTC")).timestamp()
+    assert format_local_hhmm(unix_ts, tz) == "10:20"
+
+
+def test_format_local_hhmm_midnight_rollover() -> None:
+    """Just past midnight in UTC-3 — verify the helper doesn't blow up."""
+    tz = ZoneInfo("America/Sao_Paulo")
+    unix_ts = datetime(2026, 6, 21, 3, 5, 0, tzinfo=ZoneInfo("UTC")).timestamp()  # 00:05 BRT
+    assert format_local_hhmm(unix_ts, tz) == "00:05"
