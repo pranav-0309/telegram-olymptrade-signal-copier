@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import sys
 
 from pydantic import ValidationError
@@ -12,10 +13,13 @@ from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
 from signal_copier.infra.log import setup_logging, setup_parse_failures_log
-from signal_copier.notify.protocol import NoOpNotifier
+from signal_copier.notify.protocol import NoOpNotifier, Notifier
+from signal_copier.notify.telegram_dm import TelegramDMNotifier
 from signal_copier.scheduler.trigger import Scheduler
 from signal_copier.telegram.client import TelegramClient, TelegramConfigError
 from signal_copier.telegram.listener import Listener
+
+_log = logging.getLogger(__name__)
 
 # Bounded as a safety net (M5 D-1). M6's Scheduler drains immediately;
 # the cap is never hit at the analyst's typical 1 signal/5min cadence.
@@ -29,7 +33,7 @@ async def _run(config: Config) -> int:
     scheduler: Scheduler | None = None
     scheduler_task: asyncio.Task[None] | None = None
     telegram_task: asyncio.Task[None] | None = None
-    notifier = NoOpNotifier()
+    notifier: Notifier = NoOpNotifier()
     broker: Broker | None = None
     try:
         db = await Database.connect(config.database_url)
@@ -41,6 +45,12 @@ async def _run(config: Config) -> int:
             target_chat=config.telegram_target_chat,
         )
         await tg.connect()
+
+        if config.telegram_self_dm_notifications:
+            notifier = TelegramDMNotifier(tg_client=tg, config=config)
+            _log.info("Notifications: TelegramDMNotifier (self-DM enabled)")
+        else:
+            _log.info("Notifications: NoOpNotifier (self-DM disabled)")
 
         # M6: build the broker. M6 uses DryRunBroker unconditionally;
         # M8 will add the DRY_RUN=false → OlympTradeBroker branch.
@@ -88,7 +98,7 @@ async def _run(config: Config) -> int:
 
         # Both run forever; either cancelling will trigger cleanup.
         scheduler_task = asyncio.create_task(scheduler.run(), name="scheduler")
-        telegram_task = asyncio.create_task(tg.start(), name="telegram")
+        telegram_task = asyncio.create_task(tg.start(notifier=notifier), name="telegram")
 
         # Wait for either to finish (clean exit) or raise (error).
         done, pending = await asyncio.wait(

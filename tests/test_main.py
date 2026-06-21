@@ -215,6 +215,7 @@ async def test_main_emits_bot_started_and_stopping(
     monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
     monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("TELEGRAM_SELF_DM_NOTIFICATIONS", "false")
     from signal_copier.config import Config
 
     config = Config()
@@ -255,3 +256,21 @@ async def test_main_emits_bot_started_and_stopping(
     assert "on_bot_stopping" in method_names
     stopping_call = next(c for m, c in fake_notifier.calls if m == "on_bot_stopping")
     assert stopping_call["open_cascades"] == 2
+
+
+def test_main_constructs_telegram_dm_notifier_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """__main__ must construct TelegramDMNotifier when self_dm_notifications=True
+    and pass it to both the Listener and tg.start()."""
+    import inspect
+
+    from signal_copier import __main__ as main_module
+
+    source = inspect.getsource(main_module._run)
+    # The notifier selection logic must construct TelegramDMNotifier
+    assert "TelegramDMNotifier(tg_client=tg, config=config)" in source
+    # The notifier must be passed to the Listener
+    assert "notifier=notifier" in source
+    # The notifier must be passed to tg.start()
+    assert "tg.start(notifier=notifier)" in source
