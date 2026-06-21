@@ -20,6 +20,7 @@ from signal_copier.infra.clock import (
     signal_date_in_tz,
 )
 from signal_copier.infra.state_store import StateStore
+from signal_copier.notify.protocol import Notifier
 
 _log = logging.getLogger(__name__)
 
@@ -45,12 +46,14 @@ class Listener:
         queue: asyncio.Queue[Signal],
         config: Config,
         parse_failures_logger: logging.Logger,
+        notifier: Notifier,
     ) -> None:
         self._target_chat_id = target_chat_id
         self._state_store = state_store
         self._queue = queue
         self._config = config
         self._parse_failures_logger = parse_failures_logger
+        self._notifier = notifier
         self._allowed_expirations = _allowed_expirations(config)
 
     async def on_new_message(self, event: Any) -> None:
@@ -79,6 +82,7 @@ class Listener:
         result = parse_signal(text, allowed_expirations=self._allowed_expirations)
         if isinstance(result, ParseFailure):
             self._log_parse_failure(result, text, source_message_id)
+            await self._notifier.on_parse_failure(raw_text=text, reason=result.reason)
             return
 
         # Step 2: compute trigger times + signal_id

@@ -9,7 +9,9 @@ import pytest
 from signal_copier.config import Config
 from signal_copier.domain.signal import FailureReason, Signal
 from signal_copier.infra.clock import now_unix
+from signal_copier.notify.protocol import NoOpNotifier
 from signal_copier.telegram.listener import Listener
+from tests._scheduler_fixtures import RecordingNotifier
 from tests._telegram_fixtures import (
     FakeStateStore,
     NullLogger,
@@ -38,6 +40,7 @@ def _listener(
     config: Config | None = None,
     target_chat_id: int = 42,
     parse_failures_logger: logging.Logger | None = None,
+    notifier: NoOpNotifier | RecordingNotifier | None = None,
 ) -> Listener:
     return Listener(
         target_chat_id=target_chat_id,
@@ -45,6 +48,7 @@ def _listener(
         queue=queue,
         config=config or _config(),
         parse_failures_logger=parse_failures_logger or NullLogger(),
+        notifier=notifier or NoOpNotifier(),
     )
 
 
@@ -346,3 +350,43 @@ async def test_handler_survives_parse_failure() -> None:
     assert len(state.upserted) == 1
     assert queue.qsize() == 1
     assert state.upserted[0].source_message_id == 2
+
+
+# --- Notifier wiring (Task 14 / M7) --------------------------------------
+
+
+async def test_listener_emits_on_parse_failure_on_invalid_message() -> None:
+    """When parse_signal returns ParseFailure, the listener must call
+    notifier.on_parse_failure with the raw text and FailureReason."""
+    notifier = RecordingNotifier()
+    config = Config(timezone="America/Sao_Paulo")
+    listener = Listener(
+        target_chat_id=-100,
+        state_store=FakeStateStore(),
+        queue=asyncio.Queue(),
+        config=config,
+        parse_failures_logger=NullLogger(),
+        notifier=notifier,
+    )
+    bad_event = make_event(text="not a signal", chat_id=-100, message_id=1)
+    await listener.on_new_message(bad_event)
+
+    assert any(call[0] == "on_parse_failure" for call in notifier.calls)
+
+
+async def test_listener_does_not_emit_on_parse_failure_for_valid_signal() -> None:
+    """When parse_signal succeeds, no on_parse_failure call is made."""
+    notifier = RecordingNotifier()
+    config = Config(timezone="America/Sao_Paulo")
+    listener = Listener(
+        target_chat_id=-100,
+        state_store=FakeStateStore(),
+        queue=asyncio.Queue(),
+        config=config,
+        parse_failures_logger=NullLogger(),
+        notifier=notifier,
+    )
+    good_event = make_event(text=VALID_SIGNAL_TEXT, chat_id=-100, message_id=1)
+    await listener.on_new_message(good_event)
+
+    assert not any(call[0] == "on_parse_failure" for call in notifier.calls)

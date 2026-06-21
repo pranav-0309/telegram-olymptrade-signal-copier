@@ -56,6 +56,7 @@ async def _run(config: Config) -> int:
             queue=signals_queue,
             config=config,
             parse_failures_logger=parse_failures,
+            notifier=notifier,
         )
         tg.add_message_handler(listener.on_new_message)
         tg.add_message_handler(listener.on_message_edited)
