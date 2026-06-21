@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from signal_copier.domain.signal import Signal
+from signal_copier.domain.signal import FailureReason, Signal
 from signal_copier.infra.db_rows import DailySummaryRow
 from signal_copier.notify.protocol import NoOpNotifier, Notifier
 
@@ -149,3 +149,46 @@ async def test_noop_notifier_logs_signal_rejected_by_limit_at_warning(
     msg = caplog.records[0].getMessage()
     assert "event=signal_rejected_by_limit" in msg
     assert "limit_type=loss" in msg
+
+
+# --- M7: M5-emitted events --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_parse_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_parse_failure(
+            raw_text="some random text", reason=FailureReason.MISSING_SIGNAL_LINE
+        )
+    assert len(caplog.records) == 1
+    msg = caplog.records[0].getMessage()
+    assert "event=parse_failure" in msg
+    assert "reason=missing_signal_line" in msg
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_telegram_disconnect_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Telegram disconnect is an operational anomaly — log at WARNING."""
+    with caplog.at_level(logging.WARNING, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_telegram_disconnect()
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    msg = caplog.records[0].getMessage()
+    assert "event=telegram_disconnect" in msg
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_olymp_disconnect_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """OlympTrade disconnect is an operational anomaly — log at WARNING."""
+    with caplog.at_level(logging.WARNING, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_olymp_disconnect()
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    msg = caplog.records[0].getMessage()
+    assert "event=olymp_disconnect" in msg

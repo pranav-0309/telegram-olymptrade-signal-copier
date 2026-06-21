@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from signal_copier.domain.gale import Stage
-from signal_copier.domain.signal import Signal
+from signal_copier.domain.signal import FailureReason, Signal
 
 if TYPE_CHECKING:
     from signal_copier.domain.state import TerminalState
@@ -105,6 +105,23 @@ class Notifier(Protocol):
 
     async def on_bot_stopping(self, *, open_cascades: int) -> None:
         """FR-7.1 row 'Bot shutdown'. Fires once per process."""
+
+    async def on_parse_failure(
+        self,
+        raw_text: str,
+        reason: FailureReason,
+    ) -> None:
+        """FR-7.1 row 'Parse failure'. Fires from the M5 Listener when a
+        message doesn't match the signal regex."""
+
+    async def on_telegram_disconnect(self) -> None:
+        """FR-7.1 row 'Telegram disconnect'. Fires from the M5 TelegramClient
+        wrapper on ConnectionError before reconnect."""
+
+    async def on_olymp_disconnect(self) -> None:
+        """FR-7.1 row 'OlympTrade disconnect'. Fires from M8/M10's
+        reconnect supervisor. M7 ships the method only — emission wiring
+        lands in M8 (broker) and M10 (reconnect supervisor)."""
 
 
 class NoOpNotifier:
@@ -234,3 +251,20 @@ class NoOpNotifier:
             "notify: event=bot_stopping open_cascades=%d",
             open_cascades,
         )
+
+    async def on_parse_failure(
+        self,
+        raw_text: str,
+        reason: FailureReason,
+    ) -> None:
+        _log.info(
+            "notify: event=parse_failure reason=%s preview=%r",
+            reason.value,
+            raw_text[:80],
+        )
+
+    async def on_telegram_disconnect(self) -> None:
+        _log.warning("notify: event=telegram_disconnect")
+
+    async def on_olymp_disconnect(self) -> None:
+        _log.warning("notify: event=olymp_disconnect")
