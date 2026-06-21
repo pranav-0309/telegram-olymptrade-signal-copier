@@ -42,6 +42,7 @@ StageResult = Literal["win", "loss", "tie", "timeout", "error"]
 ErrorReason = Literal[
     "signal_expired",  # FR-3.3 / FR-3.5 / FR-3.6 / FR-5.9: time window passed
     "broker_unavailable",  # FR-4.4: broker dropped / token expired
+    "daily_limit_hit",  # M6 D-2: DAILY_LOSS_LIMIT/TRADE_LIMIT/DRAWDOWN_PCT tripped
     "unknown",
 ]
 
