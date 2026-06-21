@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from loguru import logger as _loguru_logger
 
 from signal_copier.config import Config
-from signal_copier.domain.gale import Stage
+from signal_copier.domain.gale import Stage, amount_for_stage
 from signal_copier.domain.signal import FailureReason, Signal
 from signal_copier.infra.clock import format_local_hhmm
 
@@ -55,6 +55,18 @@ class TelegramDMNotifier:
         """Return trigger_unix for the stage (initial=0, gale1=1, gale2=2)."""
         index = {"initial": 0, "gale1": 1, "gale2": 2}[stage]
         return signal.trigger_unix_initial + index * signal.expiration_seconds
+
+    def _fmt_pnl(self, decimal: Decimal) -> str:
+        if decimal >= 0:
+            return f"+${decimal:.2f}"
+        return f"${decimal:.2f}"
+
+    def _fmt_signed(self, decimal: Decimal) -> str:
+        """Format a Decimal with explicit sign (e.g. '-14.00').
+
+        The caller typically prepends '$'.
+        """
+        return f"{decimal:+.2f}"
 
     # --- Methods below are filled in by Tasks 9-13. ---
 
@@ -108,7 +120,36 @@ class TelegramDMNotifier:
     async def on_win(
         self, signal: Signal, stage: Stage, pnl: Decimal, cumulative_pnl: Decimal
     ) -> None:
-        raise NotImplementedError
+        label = self._stage_label(stage)
+        if stage == "initial":
+            # fmt: off
+            text = (
+                f"✅ WIN ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"PnL: {self._fmt_pnl(pnl)}\n"
+                f"Signal closed: done_win\n"
+                f"Next: stop (cascade ends)"
+            )
+            # fmt: on
+        elif stage == "gale1":
+            # fmt: off
+            text = (
+                f"✅ WIN ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"PnL: {self._fmt_pnl(pnl)}\n"
+                f"Cascade: stopped after gale1 — total recovered"
+            )
+            # fmt: on
+        else:  # gale2
+            # fmt: off
+            text = (
+                f"✅ WIN ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"PnL: {self._fmt_pnl(pnl)}\n"
+                f"Cascade: stopped after gale2 — full recovery"
+            )
+            # fmt: on
+        await self._send(text)
 
     async def on_loss(
         self,
@@ -118,7 +159,31 @@ class TelegramDMNotifier:
         cumulative_pnl: Decimal,
         next_stage: Stage | None,
     ) -> None:
-        raise NotImplementedError
+        label = self._stage_label(stage)
+        if next_stage is None:
+            # fmt: off
+            text = (
+                f"❌ LOSS ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"PnL: {self._fmt_pnl(pnl)}\n"
+                f"Cascade: ended — full loss (${self._fmt_signed(cumulative_pnl)} total)"
+            )
+            # fmt: on
+        else:
+            next_label = {"gale1": "1st gale", "gale2": "2nd gale"}[next_stage]
+            next_trigger_unix = self._stage_gale_unix(signal, next_stage)
+            next_hhmm = format_local_hhmm(next_trigger_unix, self._config.tz())
+            gale_amount = amount_for_stage(next_stage, self._config)
+            # fmt: off
+            text = (
+                f"❌ LOSS ({label})\n"
+                f"Pair: {signal.pair}\n"
+                f"PnL: {self._fmt_pnl(pnl)}\n"
+                f"Next: scheduling {next_label} at {next_hhmm} (UTC-3), "
+                f"${gale_amount:.2f}"
+            )
+            # fmt: on
+        await self._send(text)
 
     async def on_signal_expired(self, signal: Signal, stage: Stage, trigger_hhmm: str) -> None:
         raise NotImplementedError

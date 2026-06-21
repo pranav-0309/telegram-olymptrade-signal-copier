@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -187,3 +188,159 @@ async def test_trade_placed_gale2() -> None:
         "Trade ID: ghi789"
     )
     assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_win_initial() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_win(
+        signal,
+        stage="initial",
+        pnl=Decimal("1.84"),
+        cumulative_pnl=Decimal("1.84"),
+    )
+    expected = (
+        "✅ WIN (INITIAL)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: +$1.84\n"
+        "Signal closed: done_win\n"
+        "Next: stop (cascade ends)"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_win_gale1() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_win(
+        signal,
+        stage="gale1",
+        pnl=Decimal("3.68"),
+        cumulative_pnl=Decimal("1.68"),
+    )
+    expected = (
+        "✅ WIN (1st GALE)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: +$3.68\n"
+        "Cascade: stopped after gale1 — total recovered"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_win_gale2() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_win(
+        signal,
+        stage="gale2",
+        pnl=Decimal("7.36"),
+        cumulative_pnl=Decimal("5.36"),
+    )
+    expected = (
+        "✅ WIN (2nd GALE)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: +$7.36\n"
+        "Cascade: stopped after gale2 — full recovery"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_loss_initial_with_next_stage() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_loss(
+        signal,
+        stage="initial",
+        pnl=Decimal("-2.00"),
+        cumulative_pnl=Decimal("-2.00"),
+        next_stage="gale1",
+    )
+    expected = (
+        "❌ LOSS (INITIAL)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: $-2.00\n"
+        "Next: scheduling 1st gale at 10:25 (UTC-3), $4.00"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_loss_gale1_with_next_stage() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_loss(
+        signal,
+        stage="gale1",
+        pnl=Decimal("-4.00"),
+        cumulative_pnl=Decimal("-6.00"),
+        next_stage="gale2",
+    )
+    expected = (
+        "❌ LOSS (1st GALE)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: $-4.00\n"
+        "Next: scheduling 2nd gale at 10:30 (UTC-3), $8.00"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_loss_gale2_no_next_stage() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_loss(
+        signal,
+        stage="gale2",
+        pnl=Decimal("-8.00"),
+        cumulative_pnl=Decimal("-14.00"),
+        next_stage=None,
+    )
+    # fmt: off
+    expected = (
+        "❌ LOSS (2nd GALE)\n"
+        "Pair: EUR/JPY\n"
+        "PnL: $-8.00\n"
+        "Cascade: ended — full loss ($-14.00 total)"
+    )
+    # fmt: on
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_loss_initial_uses_configured_gale_amount() -> None:
+    """If AMOUNT_GALE1 is overridden in config, the DM must show the
+    configured amount, not the hardcoded default."""
+    from decimal import Decimal
+
+    from signal_copier.config import Config
+
+    fake = FakeTgClient()
+    # Custom config: gale1 = $5.00 (instead of the $4.00 default)
+    config = Config(
+        timezone="America/Sao_Paulo",
+        amount_initial=Decimal("2.00"),
+        amount_gale1=Decimal("5.00"),
+        amount_gale2=Decimal("8.00"),
+    )
+    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    signal = _make_signal(direction="down")
+    await notifier.on_loss(
+        signal,
+        stage="initial",
+        pnl=Decimal("-2.00"),
+        cumulative_pnl=Decimal("-2.00"),
+        next_stage="gale1",
+    )
+    # Must show $5.00, not the hardcoded $4.00 default
+    assert "$5.00" in fake.sent[0]
+    assert "$4.00" not in fake.sent[0]
