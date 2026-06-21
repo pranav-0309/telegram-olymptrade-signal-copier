@@ -1,46 +1,97 @@
+"""Tests for signal_copier.infra.log — loguru-based logging + parse-failures sink."""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from signal_copier.infra.log import setup_parse_failures_log
+import pytest
+
+from signal_copier.infra.log import setup_logging, setup_parse_failures_log
 
 
-def test_creates_log_dir_if_missing(tmp_path: Path) -> None:
-    log_dir = tmp_path / "logs"
-    assert not log_dir.exists()
-    setup_parse_failures_log(log_dir)
-    assert log_dir.is_dir()
+@pytest.fixture(autouse=True)
+def _reset_loguru() -> None:
+    """Each test starts with a clean loguru state."""
+    from loguru import logger as _loguru_logger
+
+    _loguru_logger.remove()
+    yield
+    _loguru_logger.remove()
 
 
-def test_creates_parse_failures_log_file(tmp_path: Path) -> None:
-    setup_parse_failures_log(tmp_path)
-    expected = tmp_path / "parse_failures.log"
-    assert expected.is_file()
+def test_setup_logging_creates_log_file(tmp_path: Path) -> None:
+    log_file = tmp_path / "signal_copier.log"
+    setup_logging(log_file)
+    from loguru import logger
+
+    logger.info("hello world")
+    import time
+
+    time.sleep(0.1)
+    content = log_file.read_text(encoding="utf-8")
+    assert "hello world" in content
 
 
-def test_logger_writes_warning_to_file(tmp_path: Path) -> None:
-    logger = setup_parse_failures_log(tmp_path)
-    logger.warning("test message: %s", "hello")
-    # Close the handler so the file is flushed.
-    for handler in logger.handlers:
-        handler.close()
+def test_setup_logging_is_idempotent(tmp_path: Path) -> None:
+    log_file = tmp_path / "signal_copier.log"
+    setup_logging(log_file)
+    setup_logging(log_file)  # second call must not crash
+    from loguru import logger
+
+    logger.info("after-second-setup")
+    import time
+
+    time.sleep(0.1)
+    content = log_file.read_text(encoding="utf-8")
+    assert "after-second-setup" in content
+
+
+def test_intercept_handler_forwards_stdlib_log(tmp_path: Path) -> None:
+    log_file = tmp_path / "signal_copier.log"
+    setup_logging(log_file)
+    stdlib_logger = logging.getLogger("signal_copier.test_module")
+    stdlib_logger.info("via stdlib")
+    import time
+
+    time.sleep(0.1)
+    content = log_file.read_text(encoding="utf-8")
+    assert "via stdlib" in content
+    assert "signal_copier.test_module" in content
+
+
+def test_setup_parse_failures_log_writes_to_separate_file(tmp_path: Path) -> None:
+    log_file = tmp_path / "signal_copier.log"
+    setup_logging(log_file)
+    pf_logger = setup_parse_failures_log(tmp_path)
+    pf_logger.warning("malformed signal: %s", "preview-here")
+    for h in pf_logger.handlers:
+        h.close()
+    import time
+
+    time.sleep(0.1)
+    pf_content = (tmp_path / "parse_failures.log").read_text(encoding="utf-8")
+    main_content = log_file.read_text(encoding="utf-8")
+    assert "malformed signal: preview-here" in pf_content
+    assert "malformed signal: preview-here" not in main_content
+
+
+def test_setup_parse_failures_log_idempotent(tmp_path: Path) -> None:
+    """Repeated setup calls must NOT accumulate loguru sinks — a single
+    warning should appear in the file exactly once."""
+    pf_logger1 = setup_parse_failures_log(tmp_path)
+    pf_logger2 = setup_parse_failures_log(tmp_path)
+    pf_logger3 = setup_parse_failures_log(tmp_path)
+    assert pf_logger1 is pf_logger2 is pf_logger3
+
+    pf_logger3.warning("idempotency_test_message")
+    for h in pf_logger3.handlers:
+        h.close()
+    import time
+
+    time.sleep(0.1)
+
     content = (tmp_path / "parse_failures.log").read_text(encoding="utf-8")
-    assert "test message: hello" in content
-    assert "WARNING" in content
-
-
-def test_logger_does_not_propagate_to_root(tmp_path: Path) -> None:
-    logger = setup_parse_failures_log(tmp_path)
-    assert logger.propagate is False
-    # Logger name should be namespaced so it doesn't pollute root.
-    assert logger.name == "signal_copier.parse_failures"
-
-
-def test_setup_is_idempotent(tmp_path: Path) -> None:
-    # Calling setup_parse_failures_log twice should not stack handlers.
-    logger1 = setup_parse_failures_log(tmp_path)
-    logger2 = setup_parse_failures_log(tmp_path)
-    assert logger1 is logger2  # same Logger instance (cached by name)
-    file_handlers = [h for h in logger1.handlers if isinstance(h, logging.FileHandler)]
-    assert len(file_handlers) == 1
+    assert (
+        content.count("idempotency_test_message") == 1
+    ), f"Expected exactly one write, got {content.count('idempotency_test_message')}"
