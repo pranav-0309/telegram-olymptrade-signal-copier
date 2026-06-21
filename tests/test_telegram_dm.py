@@ -12,6 +12,7 @@ import pytest
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.notify.protocol import Notifier
+from signal_copier.notify.telegram_dm import TelegramDMNotifier
 
 # --- Test fixtures ---------------------------------------------------------
 
@@ -90,3 +91,42 @@ async def test_send_failure_logged_and_swallowed(
     with caplog.at_level(logging.WARNING):
         await notifier.on_telegram_disconnect()
     assert fake.sent == []
+
+
+@pytest.mark.asyncio
+async def test_signal_received() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    signal = _make_signal(direction="down")
+    await notifier.on_signal_received(signal)
+    assert len(fake.sent) == 1
+    expected = (
+        "🟢 Signal received\n"
+        "Pair: EUR/JPY\n"
+        "Direction: PUT\n"
+        "Trigger: 10:20 (UTC-3)\n"
+        "Expiration: 5 min"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_bot_started() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_bot_started(mode="dry_run", watching="@analyst", timezone="America/Sao_Paulo")
+    assert len(fake.sent) == 1
+    expected = (
+        "🟢 Bot started\n" "Mode: dry_run\n" "Watching: @analyst\n" "Timezone: America/Sao_Paulo"
+    )
+    assert fake.sent[0] == expected
+
+
+@pytest.mark.asyncio
+async def test_bot_stopping() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_bot_stopping(open_cascades=3)
+    assert len(fake.sent) == 1
+    expected = "🔴 Bot stopping\nOpen cascades: 3"
+    assert fake.sent[0] == expected

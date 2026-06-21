@@ -50,7 +50,16 @@ class TelegramDMNotifier:
     # --- Methods below are filled in by Tasks 9-13. ---
 
     async def on_signal_received(self, signal: Signal) -> None:
-        raise NotImplementedError
+        dir_str = "CALL" if signal.direction == "up" else "PUT"
+        minutes = signal.expiration_seconds // 60
+        text = (
+            f"🟢 Signal received\n"
+            f"Pair: {signal.pair}\n"
+            f"Direction: {dir_str}\n"
+            f"Trigger: {signal.trigger_hhmm} (UTC-3)\n"
+            f"Expiration: {minutes} min"
+        )
+        await self._send(text)
 
     async def on_trade_placed(
         self, signal: Signal, stage: Stage, amount: Decimal, trade_id: str
@@ -92,10 +101,19 @@ class TelegramDMNotifier:
         raise NotImplementedError
 
     async def on_bot_started(self, *, mode: str, watching: str, timezone: str) -> None:
-        raise NotImplementedError
+        # fmt: off
+        text = (
+            f"🟢 Bot started\n"
+            f"Mode: {mode}\n"
+            f"Watching: {watching}\n"
+            f"Timezone: {timezone}"
+        )
+        # fmt: on
+        await self._send(text)
 
     async def on_bot_stopping(self, *, open_cascades: int) -> None:
-        raise NotImplementedError
+        text = f"🔴 Bot stopping\nOpen cascades: {open_cascades}"
+        await self._send(text)
 
     async def on_parse_failure(self, raw_text: str, reason: FailureReason) -> None:
         raise NotImplementedError
