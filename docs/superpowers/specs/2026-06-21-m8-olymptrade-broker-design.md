@@ -129,8 +129,10 @@ def __init__(
     self._notifier = notifier
     self._client: OlympTradeClient | None = None
     self._assets: dict[str, tuple[str, str]] = {}  # slash_key → (broker_pair, category)
-    self._pending: dict[str, asyncio.Future[dict]] = {}
+    self._pending: dict[str, asyncio.Future[dict]] = {}  # active waiters
+    self._results: dict[str, dict] = {}  # completed but not yet consumed (race recovery)
     self._pending_lock = asyncio.Lock()
+    self._start_of_day_balance: Decimal | None = None
     self._connected = False
 ```
 
@@ -350,27 +352,42 @@ async def wait_result(
     if not self._connected:
         raise BrokerAuthError("wait_result() called before connect()")
 
-    # 1. Pop the Future atomically. If absent, this caller is buggy.
+    # 1. Check _results first (handles the race where e:26 arrived before
+    # wait_result was called). _on_trade_closed stored the result there.
     async with self._pending_lock:
-        future = self._pending.pop(trade_id, None)
+        if trade_id in self._results:
+            payload = self._results.pop(trade_id)
+            return _map_status(payload.get("result", "error"))
+        future = self._pending.get(trade_id)
     if future is None:
-        # M3 contract: surface as 'error'. Scheduler treats this as
-        # broker_unavailable and ends the cascade.
-        _log.warning("wait_result: unknown trade_id=%s; returning 'error'", trade_id)
+        # Either caller bug (unknown trade_id) or e:26 arrived and was
+        # consumed by a previous wait_result call. M3 contract: surface
+        # as 'error'.
+        _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
         return "error"
 
-    # 2. Await with FR-5.3 timeout
+    # 2. Await the future with FR-5.3 timeout
     try:
         payload = await asyncio.wait_for(future, timeout=timeout)
     except TimeoutError:
+        # Distinguish "broker slow" from "broker disconnected".
+        if self._client is not None and not self._client.connection.is_connected:
+            await self._notifier.on_olymp_disconnect()
+            _log.warning(
+                "wait_result: broker disconnected before reporting trade_id=%s",
+                trade_id,
+            )
+            raise ConnectionError("olymp_disconnected") from None
         _log.warning("wait_result timeout: trade_id=%s timeout=%.1fs", trade_id, timeout)
         return "timeout"
     except asyncio.CancelledError:
-        # _connection_lost_handler cancelled our future. Treat as disconnect.
+        # close() cancelled our future. Treat as disconnect.
         await self._notifier.on_olymp_disconnect()
         raise ConnectionError("olymp_disconnected") from None
 
-    # 3. Map to StageResult (defensive: default to 'error' on unknown status)
+    # 3. Clean up and map to StageResult (defensive: default to 'error').
+    async with self._pending_lock:
+        self._pending.pop(trade_id, None)
     return _map_status(payload.get("result", "error"))
 ```
 
@@ -402,7 +419,12 @@ async def _on_trade_closed(self, message: dict) -> None:
 
     The vendored client's _dispatch_message creates a Task per callback
     (olymptrade_ws/core/client.py:255-261), so this coroutine runs concurrently
-    with place()/wait_result(). The _pending_lock guards the dict mutation.
+    with place()/wait_result(). The _pending_lock guards dict mutation.
+
+    Race handling: e:26 may arrive BEFORE wait_result() is called (if the
+    scheduler places the trade and the broker reports before wait_result
+    starts polling). In that case, _pending has no entry for this trade_id,
+    and we cache the payload in _results so wait_result's first check finds it.
     """
     trade_data = message.get("d", [])
     if not isinstance(trade_data, list) or not trade_data:
@@ -417,26 +439,22 @@ async def _on_trade_closed(self, message: dict) -> None:
 
     status = info.get("status")
     pnl = info.get("balance_change")
+    stage_result = _map_status(status)
+    pnl_decimal = Decimal(str(pnl)) if pnl is not None else Decimal("0.00")
 
     async with self._pending_lock:
         future = self._pending.pop(broker_trade_id, None)
-    if future is None:
-        _log.warning(
-            "e:26 for unknown/already-resolved trade_id=%s (status=%s)",
-            broker_trade_id, status,
-        )
-        return
-    if future.done():
-        # Defensive: should not happen because place() awaits the future's
-        # lifecycle via wait_result(). But if a duplicate e:26 arrives, log.
-        _log.warning("e:26 for already-resolved trade_id=%s", broker_trade_id)
-        return
-
-    stage_result = _map_status(status)
-    pnl_decimal = (
-        Decimal(str(pnl)) if pnl is not None else Decimal("0.00")
+        if future is not None and not future.done():
+            future.set_result({"result": stage_result, "pnl": pnl_decimal})
+            return
+        # Future is None (wait_result hasn't been called yet — race) OR
+        # future is done (duplicate e:26). Cache so wait_result's first
+        # check can find it on its next call.
+        self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
+    _log.info(
+        "e:26 cached for late wait_result: trade_id=%s status=%s",
+        broker_trade_id, status,
     )
-    future.set_result({"result": stage_result, "pnl": pnl_decimal})
 ```
 
 ### 5.8 `_on_trade_accepted` / `_on_trade_interim` (callbacks, log-only)
@@ -486,10 +504,11 @@ async def close(self) -> None:
                 if not future.done():
                     future.cancel("OlympTradeBroker closed")
             self._pending.clear()
+            self._results.clear()
         _log.info("OlympTradeBroker closed")
 ```
 
-The vendored client's `stop()` (olymptrade_ws/core/client.py:63-91) cancels `_ping_task` and `_processing_task`, then disconnects the WS. The pending futures get cancelled here in `close()` so callers' `wait_for` raises `CancelledError` immediately rather than waiting for the timeout.
+The vendored client's `stop()` (olymptrade_ws/core/client.py:63-91) cancels `_ping_task` and `_processing_task`, then disconnects the WS. The pending futures get cancelled here in `close()` so callers' `wait_for` raises `CancelledError` immediately rather than waiting for the timeout. `_results` is also cleared so a stale cached result cannot bleed into a reconnected session.
 
 ### 5.10 `_cache_start_of_day_balance()` (private, async)
 
@@ -623,147 +642,42 @@ SignalSupervisor._drive_cascade()
     ↓ state_store.record_stage_placed(signal_id, stage, broker_trade_id="12345")
     ↓ notifier.on_trade_placed(signal, stage="initial", amount=$2, trade_id="12345")
     ↓ await broker.wait_result("12345", timeout=330)
-        ↓ self._pending.pop("12345") → future
+        ↓ async with self._pending_lock:
+        ↓   # _results first (handles the e:26-arrived-before-wait_result race)
+        ↓   if "12345" in self._results: return _map_status(...)
+        ↓   future = self._pending.get("12345")
         ↓ await asyncio.wait_for(future, timeout=330)
         ↓ # 5 minutes elapse, e:26 arrives...
         ↓ _on_trade_closed({"d": [{"id": 12345, "status": "loss", "balance_change": -2.0}]})
-            ↓ async with self._pending_lock: self._pending.pop("12345") → future (None; race)
-            ↓ # Actually: pop returns the future that wait_result just popped.
-            # Wait — see Section 8 design note below.
+            ↓ async with self._pending_lock: future = self._pending.pop("12345")
+            ↓ future.set_result({"result": "loss", "pnl": Decimal("-2.00")})
+        ↓ # wait_for unblocks
+        ↓ return _map_status("loss") → "loss"
+    ↓ scheduler's _apply_result_and_finalize transitions to placed_gale1
+    ↓ notifier.on_loss(...) → cascade continues to gale1
 ```
 
-**Wait — race detected.** `wait_result` pops the future; `_on_trade_closed` also pops. If `_on_trade_closed` runs first (because e:26 arrives before `wait_result` is called for an in-flight trade), the future is gone by the time `wait_result` runs.
-
-**Resolution:** `wait_result` should NOT pop. Instead, it should peek + remove on resolution. The `_pending` dict holds the future for the broker to resolve; the supervisor's `wait_result` reads the future's result without removing. Removal happens in `_on_trade_closed` itself (so we never leak pending entries).
-
-**Revised flow:**
-
-```python
-async def wait_result(self, trade_id: str, *, timeout: float) -> StageResult:
-    async with self._pending_lock:
-        future = self._pending.get(trade_id)
-    if future is None:
-        # Either the trade_id is unknown (caller bug) or e:26 already arrived
-        # before wait_result was called. In the latter case, there's no Future
-        # to await — but the result is already in `future.done()`. Handle by
-        # checking for a "completed" sentinel: if the future was set and popped
-        # already, we have no way to recover. This is a known limitation.
-        # For v1: caller treats as 'error'.
-        _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
-        return "error"
-
-    try:
-        payload = await asyncio.wait_for(future, timeout=timeout)
-    except TimeoutError:
-        _log.warning("wait_result timeout: trade_id=%s", trade_id)
-        return "timeout"
-
-    return _map_status(payload.get("result", "error"))
-```
-
-**But there's still the race:** if `_on_trade_closed` resolves the future AND removes it from `_pending` (so `_pending.get(trade_id)` returns None), `wait_result` can't see the result.
-
-**Cleaner design:** separate storage for in-flight vs. completed results.
-
-```python
-self._pending: dict[str, asyncio.Future[dict]]  # active waiters
-self._results: dict[str, dict]                  # completed results, read-once
-```
-
-`place()` inserts into `_pending`. `_on_trade_closed` resolves the future AND stores the result in `_results` (with a TTL or read-once flag), then pops from `_pending`. `wait_result()` first checks `_results` (early-out if already done), then awaits the future.
-
-```python
-async def wait_result(self, trade_id: str, *, timeout: float) -> StageResult:
-    # 1. If e:26 already arrived (race), return immediately
-    async with self._pending_lock:
-        if trade_id in self._results:
-            payload = self._results.pop(trade_id)
-            return _map_status(payload.get("result", "error"))
-        future = self._pending.get(trade_id)
-    if future is None:
-        _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
-        return "error"
-
-    # 2. Otherwise await the future
-    try:
-        payload = await asyncio.wait_for(future, timeout=timeout)
-    except TimeoutError:
-        _log.warning("wait_result timeout: trade_id=%s", trade_id)
-        return "timeout"
-
-    # 3. Clean up (defensive; _on_trade_closed also pops _pending)
-    async with self._pending_lock:
-        self._pending.pop(trade_id, None)
-    return _map_status(payload.get("result", "error"))
-```
-
-And in `_on_trade_closed`:
-
-```python
-async def _on_trade_closed(self, message: dict) -> None:
-    # ... extract broker_trade_id, status, pnl ...
-    async with self._pending_lock:
-        future = self._pending.pop(broker_trade_id, None)
-        if future is not None and not future.done():
-            future.set_result({"result": stage_result, "pnl": pnl_decimal})
-            return
-        # Future is None (wait_result hasn't been called yet, or already returned)
-        # OR future is done (duplicate e:26). In either case, cache the result
-        # so wait_result can find it.
-        self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
-    _log.info(
-        "e:26 cached for late wait_result: trade_id=%s status=%s",
-        broker_trade_id, status,
-    )
-```
-
-**Edge case cleanup:** if a trade's e:26 arrives but `wait_result` is never called (e.g., process crashes between `place()` and `wait_result()`), `_results` retains the entry. M8 adds `close()` to also clear `_results`.
+**Race handling.** e:26 may arrive before `wait_result` is called (if the broker reports faster than the scheduler reaches the await — rare but possible). `_on_trade_closed` writes the result to `self._results` when `_pending.pop` returns `None`; `wait_result` checks `_results` first and returns immediately. This is the only data-flow quirk; everything else is straightforward.
 
 ### 7.2 Disconnect mid-trade
 
 ```
 OlympTrade WS closes (network blip)
-    ↓ vendored client _connection_lost_handler runs
-    ↓ cancels _ping_task and _processing_task
-    ↓ for fut in _response_futures.values(): fut.set_exception(ConnectionError(...))
-    ↓ # BUT: our _pending Futures are NOT in _response_futures — they're ours.
-    # We need to detect the disconnect ourselves.
+    ↓ vendored client's Connection sets self._is_connected = False
+    ↓ self._client.connection.is_connected now returns False
+    ↓ # M8's wait_result polls this on TimeoutError:
+    ↓ await asyncio.wait_for(future, timeout=330) → TimeoutError
+    ↓ self._client.connection.is_connected == False
+    ↓ await self._notifier.on_olymp_disconnect()
+    ↓   # DM: "🔌 OlympTrade disconnected. Process will exit; supervisor will restart."
+    ↓ raise ConnectionError("olymp_disconnected")
+    ↓ # scheduler's _wait_for_stage_result catches → returns "error"
+    ↓ # _apply_result_and_finalize → cascade ends with status='error', error_reason='broker_unavailable'
+    ↓ # process exits non-zero from main() (M3 runtime error → exit code 1)
+    ↓ # Railway restart policy → container restarts, M9 reconciliation logic resumes
 ```
 
-**Fix:** register a "connection closed" signal. The vendored client doesn't expose this directly, but we can detect it via the `_ping_loop` (`olymptrade_ws/core/client.py:270-305`): if a ping fails repeatedly with `ConnectionError`, the connection is dead.
-
-**Simpler approach (M8):** wrap `_on_trade_closed` and the other callbacks in a defensive try/except. If the vendored client's message dispatcher fails to deliver an event, our callbacks simply don't fire. `wait_result` then hits its `asyncio.wait_for` timeout → returns `"timeout"` (treated as loss-equivalent). This matches the M3 / M6 contract; no special handling needed.
-
-**Detection for `on_olymp_disconnect`:** register a one-shot check inside `_on_trade_closed`:
-
-```python
-async def _on_trade_closed(self, message: dict) -> None:
-    # ... existing logic ...
-    # If the WS just came back after a disconnect, message arrives normally.
-    # We don't need to detect disconnect here — wait_result's timeout does it.
-```
-
-**Detection in `wait_result` (for the explicit DM):**
-
-```python
-async def wait_result(self, trade_id: str, *, timeout: float) -> StageResult:
-    # ... existing logic ...
-    try:
-        payload = await asyncio.wait_for(future, timeout=timeout)
-    except TimeoutError:
-        # Distinguish "broker didn't report in time" from "broker disconnected".
-        if self._client is not None and not self._client.connection.is_connected:
-            await self._notifier.on_olymp_disconnect()
-            _log.warning(
-                "wait_result: broker disconnected before reporting trade_id=%s",
-                trade_id,
-            )
-            raise ConnectionError("olymp_disconnected") from None
-        _log.warning("wait_result timeout: trade_id=%s", trade_id)
-        return "timeout"
-```
-
-**The `connection.is_connected` property exists in the vendored `Connection` class** (`olymptrade_ws/core/connection.py`). The vendored client exposes it as `self._client.connection.is_connected`.
+The vendored client's `_connection_lost_handler` (`olymptrade_ws/core/client.py:94-111`) cancels `_response_futures` but does **not** notify M8's `_pending` futures. M8 detects the disconnect by polling `self._client.connection.is_connected` (a `bool` property on the vendored `Connection` class — `olymptrade_ws/core/connection.py:24-25`) when `wait_result` times out. This is the only place M8 needs to inspect the vendored client's connection state.
 
 ### 7.3 Unsupported pair
 
@@ -895,6 +809,7 @@ Coverage matrix (one test per row):
 | `test_wait_result_timeout_when_broker_disconnected_raises_connection_error` | No event, fake.connection.is_connected = False → `ConnectionError` after DM-notify `on_olymp_disconnect` |
 | `test_wait_result_unknown_trade_id_returns_error` | `wait_result("nope", ...)` → `"error"`, WARNING logged |
 | `test_wait_result_resolves_after_e26_already_arrived` | Deliver e:26 BEFORE calling wait_result → wait_result returns immediately (race recovery) |
+| `test_on_trade_closed_caches_result_in_results_dict` | Deliver e:26 when `_pending` has no entry for the trade_id → result stored in `_results`; subsequent `wait_result` finds it |
 | `test_on_trade_closed_ignores_unknown_trade_id` | `_deliver_event(E_TRADE_CLOSED, {"d": [{"id": "nope", ...}]})` → no exception |
 | `test_on_trade_closed_ignores_duplicate_delivery` | Deliver same e:26 twice → second is WARNING, future stays resolved |
 | `test_on_trade_closed_handles_empty_d_list` | `_deliver_event(E_TRADE_CLOSED, {"d": []})` → no-op |
@@ -1013,7 +928,7 @@ These tests stub out `Database.connect`, `TelegramClient`, `OlympTradeBroker.con
 | `tests/test_broker_protocol.py` | +2 tests (`isinstance(olymp_broker, Broker)`, `BrokerAuthError` importable) | +30 |
 | `tests/test_main.py` | +2 tests (dry-run branch, olymp branch with token) | +50 |
 
-**Total:** 9 files touched, ~880 lines added (code + tests + fixtures + comments). **No file deleted, no test weakened, no public API removed.**
+**Total:** 10 files touched, ~880 lines added (code + tests + fixtures + comments). **No file deleted, no test weakened, no public API removed.**
 
 ## 11. Acceptance criteria
 
