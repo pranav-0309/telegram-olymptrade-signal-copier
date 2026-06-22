@@ -777,3 +777,51 @@ async def test_close_without_connect_is_safe(notifier: RecordingNotifier) -> Non
     )
     await broker.close()
     assert broker._connected is False
+
+
+# --- connect() callback registration tests (Task 14) ----------------------
+
+
+async def test_connect_registers_three_callbacks(notifier: RecordingNotifier) -> None:
+    """connect() registers e:21/e:22/e:26 callbacks on the vendored client."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
+    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+
+    await broker.connect()
+
+    assert any(
+        cb == broker._on_trade_closed
+        for cb in fake_client._callbacks.get(parameters.E_TRADE_CLOSED, [])
+    )
+    assert any(
+        cb == broker._on_trade_accepted
+        for cb in fake_client._callbacks.get(parameters.E_TRADE_ACCEPTED, [])
+    )
+    assert any(
+        cb == broker._on_trade_interim
+        for cb in fake_client._callbacks.get(parameters.E_TRADE_UPDATE_INTERIM, [])
+    )
+
+
+async def test_connect_calls_initialize_session(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
+    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+
+    await broker.connect()
+
+    assert fake_client.initialize_session_called is True
+
+
+async def test_connect_account_group_mismatch_raises(notifier: RecordingNotifier) -> None:
+    """Broker reports different account_group than configured → BrokerAuthError."""
+    fake_client = FakeOlympTradeClient(account_group="real")
+    broker = _make_broker(notifier, fake_client=fake_client, account_group="demo")
+    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
+    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+
+    with pytest.raises(BrokerAuthError, match="account_group"):
+        await broker.connect()

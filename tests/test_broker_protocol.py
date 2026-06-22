@@ -76,3 +76,16 @@ def test_broker_auth_error_importable_from_top_level() -> None:
     from signal_copier import BrokerAuthError as TopLevel
 
     assert TopLevel is BrokerAuthError
+
+
+def test_olymp_broker_satisfies_protocol() -> None:
+    from signal_copier.broker.olymp import OlympTradeBroker
+    from signal_copier.notify.protocol import NoOpNotifier
+
+    broker = OlympTradeBroker(
+        access_token="fake",
+        account_id="12345",
+        account_group="demo",
+        notifier=NoOpNotifier(),
+    )
+    assert isinstance(broker, Broker)
