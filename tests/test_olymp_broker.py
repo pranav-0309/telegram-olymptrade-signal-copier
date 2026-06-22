@@ -229,5 +229,7 @@ async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifi
     asyncio.create_task(deliver_mixed())
     await broker._build_asset_map()
 
-    assert "EUR/JPY" in broker._assets
-    assert "GBP/USD" in broker._assets
+    assert broker._assets == {
+        "EUR/JPY": ("EURJPY", "forex"),
+        "GBP/USD": ("GBPUSD", "forex"),
+    }

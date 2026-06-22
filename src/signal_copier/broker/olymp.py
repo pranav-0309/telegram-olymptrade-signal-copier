@@ -27,9 +27,9 @@ from decimal import Decimal
 
 from olymptrade_ws import OlympTradeClient
 from olymptrade_ws.olympconfig import parameters
-from signal_copier.broker.base import (  # noqa: F401  (referenced in class docstring; used by future tasks)
+from signal_copier.broker.base import (
     BrokerAuthError,
-    UnsupportedPairError,
+    UnsupportedPairError,  # noqa: F401  (used by future Task 9: place())
 )
 from signal_copier.domain.state import StageResult
 from signal_copier.notify.protocol import Notifier
@@ -180,14 +180,18 @@ class OlympTradeBroker:
 
         Times out after 15s. On timeout, every place() will fail. Fail loud.
         """
+        client = self._client
+        assert client is not None  # connect() must run before _build_asset_map
+
         loop = asyncio.get_running_loop()
         future: asyncio.Future[list[object]] = loop.create_future()
 
         async def capture(message: dict[str, object]) -> None:
             if not future.done():
-                future.set_result(message.get("d", []))
+                d_value = message.get("d", [])
+                future.set_result(d_value if isinstance(d_value, list) else [])
 
-        self._client.register_callback(ASSET_LIST_EVENT, capture)
+        client.register_callback(ASSET_LIST_EVENT, capture)
         try:
             raw_assets = await asyncio.wait_for(future, timeout=15.0)
         except TimeoutError as exc:
@@ -195,7 +199,7 @@ class OlympTradeBroker:
                 "asset map: e:1068 push did not arrive within 15s of initialize_session()"
             ) from exc
         finally:
-            self._client.unregister_callback(ASSET_LIST_EVENT, capture)
+            client.unregister_callback(ASSET_LIST_EVENT, capture)
 
         for asset in raw_assets:
             if not isinstance(asset, dict):
