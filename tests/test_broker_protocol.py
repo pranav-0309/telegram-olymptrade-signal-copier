@@ -7,6 +7,7 @@ from inspect import Parameter
 
 from signal_copier.broker import Broker, UnsupportedPairError
 from signal_copier.broker.base import Broker as BrokerCanonical
+from signal_copier.broker.base import BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
 
 
@@ -74,4 +75,4 @@ def test_broker_auth_error_has_meaningful_message() -> None:
 def test_broker_auth_error_importable_from_top_level() -> None:
     from signal_copier import BrokerAuthError as TopLevel
 
-    assert TopLevel is not None
+    assert TopLevel is BrokerAuthError
