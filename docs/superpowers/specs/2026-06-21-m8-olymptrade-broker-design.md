@@ -596,18 +596,20 @@ Replace the M6 hardcoded `broker = DryRunBroker()` block:
 broker = DryRunBroker()
 await broker.connect()
 
-# M8:
+# M8: config-driven broker selection. Validate config first (fast-fail
+# before any I/O so a missing token doesn't trigger DB or Telegram
+# connect), then build the broker.
+if not config.olymp_access_token and not config.dry_run:
+    sys.stderr.write(
+        "❌ DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty. "
+        "Set OLYMP_ACCESS_TOKEN in .env or set DRY_RUN=true.\n"
+    )
+    return 2
 if config.dry_run:
     broker = DryRunBroker()
     _log.info("Broker: DryRunBroker (DRY_RUN=true)")
     await broker.connect()
 else:
-    if not config.olymp_access_token:
-        sys.stderr.write(
-            "❌ DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty. "
-            "Set OLYMP_ACCESS_TOKEN in .env or set DRY_RUN=true.\n"
-        )
-        return 2
     broker = OlympTradeBroker(
         access_token=config.olymp_access_token,
         account_id=config.olymp_account_id,
@@ -618,14 +620,44 @@ else:
         "Broker: OlympTradeBroker (live %s, account_id=%s)",
         config.olymp_account_group, config.olymp_account_id,
     )
-    try:
-        await broker.connect()
-    except BrokerAuthError as exc:
-        sys.stderr.write(f"❌ OlympTradeBroker failed to connect: {exc}\n")
-        return 2
+    await broker.connect()  # BrokerAuthError propagates → mapped in main()
 ```
 
-**Why `return 2` on `BrokerAuthError`:** distinguishes config errors (return 2) from runtime errors (return 1) per the existing convention in `main()`. The Railway restart policy (ON_FAILURE) does NOT restart on exit code 2 — only on non-zero from runtime errors. This prevents an infinite restart loop on a bad token (S-11 will formalize this in M10+).
+The rest of `__main__.py` is unchanged except for `main()`, which adds `BrokerAuthError` to its top-level exception handler:
+
+```python
+def main() -> int:
+    try:
+        config = Config()
+    except ValidationError as exc:
+        sys.stderr.write(f"❌ Config validation failed:\n{exc}\n")
+        return 2
+
+    setup_logging(config.log_path)
+
+    try:
+        return asyncio.run(_run(config))
+    except DatabaseConnectionError as exc:
+        sys.stderr.write(f"❌ {exc}\n")
+        return 1
+    except TelegramConfigError as exc:
+        sys.stderr.write(f"❌ {exc}\n")
+        return 2
+    except BrokerAuthError as exc:
+        # M8: bad token / WS disconnect during connect → exit 2
+        # (config-style error, not a runtime crash). Railway does not
+        # restart on exit code 2.
+        sys.stderr.write(f"❌ OlympTradeBroker failed to connect: {exc}\n")
+        return 2
+    except KeyboardInterrupt:
+        print("\n🔴 signal_copier stopping (SIGINT)")
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"❌ Unhandled error: {type(exc).__name__}: {exc}\n")
+        return 1
+```
+
+**Why `BrokerAuthError → return 2` in `main()`:** distinguishes config errors (return 2) from runtime errors (return 1) per the existing convention. The Railway restart policy (ON_FAILURE) does NOT restart on exit code 2 — only on non-zero from runtime errors. This prevents an infinite restart loop on a bad token (S-11 will formalize this in M10+). The handler lives in `main()` (not `_run()`) so domain exceptions follow the codebase's uniform pattern: propagate from `_run`, get mapped to exit codes in `main()`.
 
 The rest of `__main__.py` is unchanged: the same `notifier` is passed to both the dry-run and olymp branches; the same `Scheduler`, `Listener`, and `Database` wiring applies. The `broker.close()` call in the `finally` block works for both.
 
