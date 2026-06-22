@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from signal_copier.broker.base import Broker
+    from signal_copier.infra.db_rows import SignalRow
     from signal_copier.infra.state_store import StateStore
     from signal_copier.scheduler.trigger import Scheduler
 
@@ -49,7 +50,7 @@ async def recover_active_signals(
     now_unix: float | None = None,
 ) -> RecoveryReport:
     """One-shot boot-time recovery. No-op when no active signals exist."""
-    active = await state_store.get_active_signals()
+    active: list[SignalRow] = await state_store.get_active_signals()
     if not active:
         return RecoveryReport(rehydrated=0, timed_out=0, abandoned=0)
 

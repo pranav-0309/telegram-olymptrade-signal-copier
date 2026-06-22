@@ -130,8 +130,7 @@ async def test_recover_within_window_calls_adopt() -> None:
 
     assert report.rehydrated == 1
     assert report.timed_out == 0
-    assert len(scheduler.adopted) == 1
-    assert scheduler.adopted[0][0] == "sig-001"
+    assert scheduler.adopted == [("sig-001", "placed_initial")]
     assert scheduler.timed_out == []
 
 
