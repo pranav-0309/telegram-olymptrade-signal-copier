@@ -17,6 +17,25 @@ class UnsupportedPairError(Exception):
     """
 
 
+class BrokerAuthError(Exception):
+    """Raised by Broker.place()/connect() when the broker rejects the token,
+    the session is invalid, or the WS disconnects unexpectedly.
+
+    Distinct from UnsupportedPairError: BrokerAuthError is an authentication
+    or connectivity failure (the broker is reachable but the auth/session is
+    not), whereas UnsupportedPairError is a missing-asset failure (the auth
+    works but the requested pair doesn't exist on this account).
+
+    The scheduler maps both to status='error', but BrokerAuthError triggers:
+      1. notifier.on_olymp_disconnect() — only on disconnect mid-trade
+      2. process exit non-zero — so Railway restarts the container
+
+    S-11 (M10+) will wrap BrokerAuthError in a circuit-breaker counter so a
+    bad token doesn't trigger an infinite restart loop. For v1, one bad
+    token = manual investigation.
+    """
+
+
 @runtime_checkable
 class Broker(Protocol):
     """Broker-agnostic trading surface used by the scheduler (M6) and state

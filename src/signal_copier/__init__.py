@@ -6,6 +6,6 @@ top-level path (`from signal_copier import Broker`) is provided as a
 shorthand for callers that prefer it.
 """
 
-from signal_copier.broker.base import Broker, UnsupportedPairError
+from signal_copier.broker.base import Broker, BrokerAuthError, UnsupportedPairError
 
-__all__ = ["Broker", "UnsupportedPairError"]
+__all__ = ["Broker", "BrokerAuthError", "UnsupportedPairError"]

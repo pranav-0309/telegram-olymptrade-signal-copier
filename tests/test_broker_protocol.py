@@ -56,3 +56,22 @@ def test_unsupported_pair_error_importable_from_top_level() -> None:
     from signal_copier import UnsupportedPairError as TopLevel
 
     assert TopLevel is UnsupportedPairError
+
+
+def test_broker_auth_error_importable() -> None:
+    from signal_copier.broker.base import BrokerAuthError
+
+    assert issubclass(BrokerAuthError, Exception)
+
+
+def test_broker_auth_error_has_meaningful_message() -> None:
+    from signal_copier.broker.base import BrokerAuthError
+
+    err = BrokerAuthError("token rejected")
+    assert "token rejected" in str(err)
+
+
+def test_broker_auth_error_importable_from_top_level() -> None:
+    from signal_copier import BrokerAuthError as TopLevel
+
+    assert TopLevel is not None

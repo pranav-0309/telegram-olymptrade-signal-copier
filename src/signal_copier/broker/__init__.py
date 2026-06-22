@@ -5,6 +5,6 @@ Provides the Broker Protocol (M3) and concrete implementations:
   - OlympTradeBroker  (M8, wraps vendored olymptrade_ws)
 """
 
-from signal_copier.broker.base import Broker, UnsupportedPairError
+from signal_copier.broker.base import Broker, BrokerAuthError, UnsupportedPairError
 
-__all__ = ["Broker", "UnsupportedPairError"]
+__all__ = ["Broker", "BrokerAuthError", "UnsupportedPairError"]
