@@ -711,3 +711,69 @@ async def test_wait_result_before_connect_raises(notifier: RecordingNotifier) ->
     )
     with pytest.raises(BrokerAuthError, match="before connect"):
         await broker.wait_result("12345", timeout=2.0)
+
+
+# --- close() tests (Task 13) -----------------------------------------------
+
+
+async def test_close_is_idempotent(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+
+    await broker.close()
+    await broker.close()  # second call must not raise
+    assert fake_client.stop_called is True  # only once
+
+
+async def test_close_stops_underlying_client(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+
+    await broker.close()
+    assert fake_client.stop_called is True
+    assert broker._connected is False
+
+
+async def test_close_cancels_pending_futures(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    await broker.close()
+
+    # The Future is cancelled; wait_result should raise CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await broker.wait_result(trade_id, timeout=1.0)
+
+
+async def test_close_clears_results_cache(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._results["some_id"] = {"result": "win", "pnl": Decimal("1.0")}
+
+    await broker.close()
+    assert broker._results == {}
+
+
+async def test_close_without_connect_is_safe(notifier: RecordingNotifier) -> None:
+    """close() before connect() is a no-op."""
+    broker = OlympTradeBroker(
+        access_token="fake",
+        account_id="12345",
+        account_group="demo",
+        notifier=notifier,
+    )
+    await broker.close()
+    assert broker._connected is False

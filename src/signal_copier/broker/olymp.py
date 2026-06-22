@@ -412,10 +412,8 @@ class OlympTradeBroker:
           - 'timeout' (broker connected, no e:26 within timeout)
           - ConnectionError (broker disconnected — DM-notifies, propagates)
           - 'error' (unknown trade_id, defensive)
+          - CancelledError (future was cancelled, e.g. by close())
         """
-        if not self._connected:
-            raise BrokerAuthError("wait_result() called before connect()")
-
         # 1. Check _results first (handles the race where e:26 arrived
         # before wait_result was called).
         async with self._pending_lock:
@@ -425,6 +423,8 @@ class OlympTradeBroker:
                 return _map_status(result_str if isinstance(result_str, str) else None)
             future = self._pending.get(trade_id)
         if future is None:
+            if not self._connected:
+                raise BrokerAuthError("wait_result() called before connect()")
             _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
             return "error"
 
@@ -442,12 +442,29 @@ class OlympTradeBroker:
                 raise ConnectionError("olymp_disconnected") from None
             _log.warning("wait_result timeout: trade_id=%s timeout=%.1fs", trade_id, timeout)
             return "timeout"
-        except asyncio.CancelledError:
-            await self._notifier.on_olymp_disconnect()
-            raise ConnectionError("olymp_disconnected") from None
 
         # 3. Clean up and map to StageResult
         async with self._pending_lock:
             self._pending.pop(trade_id, None)
         status = payload.get("result")
         return _map_status(status if isinstance(status, str) else None)
+
+    async def close(self) -> None:
+        """Stop the vendored client and cancel pending futures.
+
+        Idempotent. Cancels any pending Futures so wait_result callers
+        don't hang on the timeout. Cancelled futures are left in _pending
+        so wait_result can find them and propagate CancelledError.
+        """
+        if not self._connected or self._client is None:
+            return
+        try:
+            await self._client.stop()  # type: ignore[no-untyped-call]
+        finally:
+            self._connected = False
+            async with self._pending_lock:
+                for future in self._pending.values():
+                    if not future.done():
+                        future.cancel("OlympTradeBroker closed")
+                self._results.clear()
+        _log.info("OlympTradeBroker closed")
