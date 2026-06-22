@@ -1,0 +1,15 @@
+{
+  "d": [
+    {
+      "id": 98765,
+      "status": "win",
+      "balance_change": 1.84,
+      "pair": "EURJPY",
+      "open_price": 165.432,
+      "close_price": 165.512,
+      "direction": "down",
+      "amount": 2.0,
+      "group": "demo"
+    }
+  ]
+}

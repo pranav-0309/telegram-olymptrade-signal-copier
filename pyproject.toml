@@ -88,3 +88,7 @@ ignore_errors = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --ignore=OlympTradeAPI"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
