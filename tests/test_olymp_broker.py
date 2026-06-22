@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import unittest.mock
+from decimal import Decimal
 
 import pytest
 
@@ -233,3 +235,42 @@ async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifi
         "EUR/JPY": ("EURJPY", "forex"),
         "GBP/USD": ("GBPUSD", "forex"),
     }
+
+
+async def test_cache_start_of_day_balance_success(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.current_balance = {"d": [{"group": "demo", "balance": 10000.0}]}
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    await broker._cache_start_of_day_balance()
+    assert broker._start_of_day_balance == Decimal("10000.0")
+
+
+async def test_cache_start_of_day_balance_timeout_leaves_none(
+    notifier: RecordingNotifier,
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.current_balance = None
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    # Speed up the test by patching the module-level asyncio.sleep
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(seconds: float) -> None:
+        await real_sleep(0.001)
+
+    with unittest.mock.patch("signal_copier.broker.olymp.asyncio.sleep", side_effect=fast_sleep):
+        await broker._cache_start_of_day_balance()
+    assert broker._start_of_day_balance is None
+
+
+async def test_cache_start_of_day_balance_skips_wrong_group(
+    notifier: RecordingNotifier,
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    # Broker reports real, but we configured demo
+    fake_client.current_balance = {"d": [{"group": "real", "balance": 5000.0}]}
+    broker = _make_broker(notifier, fake_client=fake_client, account_group="demo")
+    broker._client = fake_client
+    await broker._cache_start_of_day_balance()
+    assert broker._start_of_day_balance is None

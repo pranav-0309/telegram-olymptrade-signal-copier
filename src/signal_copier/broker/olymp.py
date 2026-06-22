@@ -223,8 +223,48 @@ class OlympTradeBroker:
         )
 
     async def _cache_start_of_day_balance(self) -> None:
-        """Stub — implemented in Task 8."""
-        return None
+        """Read the e:55 balance push and cache it for FR-6.3 drawdown.
+
+        The vendored client stores the latest balance in `current_balance`.
+        The balance update fires once at session start; we poll briefly so
+        the value is populated. If not populated within 3s, set None
+        (FR-6.3 then falls back to M6 placeholder behavior).
+        """
+        client = self._client
+        assert client is not None
+
+        # Brief delay to let the e:55 push arrive (typically <500ms)
+        for _ in range(30):  # 30 * 100ms = 3s total
+            if client.current_balance:
+                break
+            await asyncio.sleep(0.1)
+
+        balance_msg = client.current_balance
+        if not balance_msg:
+            _log.warning(
+                "could not read start-of-day balance from e:55 within 3s; "
+                "FR-6.3 drawdown check will use 0 baseline (M6 behavior)"
+            )
+            self._start_of_day_balance = None
+            return
+
+        for entry in balance_msg.get("d", []):
+            if isinstance(entry, dict) and entry.get("group") == self._account_group:
+                balance = entry.get("balance")
+                if balance is not None:
+                    self._start_of_day_balance = Decimal(str(balance))
+                    _log.info(
+                        "start-of-day balance cached: %s %s",
+                        self._start_of_day_balance,
+                        self._account_group,
+                    )
+                    return
+
+        _log.warning(
+            "balance message arrived but no entry matches group=%s",
+            self._account_group,
+        )
+        self._start_of_day_balance = None
 
     async def _on_trade_closed(self, message: dict[str, object]) -> None:
         """Stub — implemented in Task 10."""
