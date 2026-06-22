@@ -555,9 +555,11 @@ class SignalSupervisor:
         """Return 'loss' | 'count' | 'drawdown' if a daily limit is hit;
         None if all clear (FR-6.1/6.2/6.3). 0 = disabled (D-3).
 
-        M6 simplification: `daily_drawdown_pct` is treated as a USD threshold
-        (not a percentage of starting balance). M8 fixes the semantics
-        when OlympTradeBroker.balance() is wired in at startup.
+        M8 fix: when `self._broker` exposes `start_of_day_balance` (only
+        OlympTradeBroker does — via `_cache_start_of_day_balance` during
+        connect()), `daily_drawdown_pct` is treated as a percentage of that
+        balance. Otherwise, fall back to the M6 placeholder behavior (treat
+        `daily_drawdown_pct` as a USD threshold).
         """
         summary = await self._state_store.get_daily_summary(self._signal_date())
         if summary is None:
@@ -568,8 +570,18 @@ class SignalSupervisor:
             return "loss"
         if cfg.daily_trade_limit > 0 and summary.trades_count >= cfg.daily_trade_limit:
             return "count"
-        if cfg.daily_drawdown_pct > 0 and summary.realized_pnl <= -cfg.daily_drawdown_pct:
-            return "drawdown"
+        if cfg.daily_drawdown_pct > 0:
+            starting = getattr(self._broker, "start_of_day_balance", None)
+            if starting is not None:
+                # M8: treat daily_drawdown_pct as a percentage of start-of-day balance
+                threshold = starting * Decimal(cfg.daily_drawdown_pct) / Decimal(100)
+                if summary.realized_pnl <= -threshold:
+                    return "drawdown"
+            else:
+                # M6 fallback: dry-run path with no start-of-day balance — treat
+                # daily_drawdown_pct as a USD threshold (placeholder behavior)
+                if summary.realized_pnl <= -cfg.daily_drawdown_pct:
+                    return "drawdown"
         return None
 
     async def _handle_limit_rejection(self, limit_type: str) -> None:

@@ -750,3 +750,80 @@ async def test_notifier_exception_does_not_abort_cascade() -> None:
     # The on_cascade_complete was called despite on_trade_placed raising.
     complete_calls = [c for m, c in notifier.calls if m == "on_cascade_complete"]
     assert len(complete_calls) == 1
+
+
+# --- M8 drawdown semantics fix (Task 17) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_daily_drawdown_uses_percentage_of_start_of_day_balance() -> None:
+    """When broker.start_of_day_balance is set, drawdown_pct is a percentage."""
+    from datetime import datetime
+
+    from signal_copier.infra.db_rows import DailySummaryRow
+    from signal_copier.scheduler.trigger import SignalSupervisor
+
+    signal = make_signal_with_future_trigger(trigger_in_seconds=3600.0)
+    config = Config(daily_drawdown_pct=4)  # 4% of 1000 = 40 threshold; -50 breaches it
+    signal_date = datetime.fromtimestamp(signal.trigger_unix_initial, tz=config.tz()).date()
+
+    fake_broker = FakeBroker()
+    fake_broker.start_of_day_balance = Decimal("1000.0")  # type: ignore[attr-defined]
+    fake_state = FakeStateStore()
+    fake_state.daily_summaries[signal_date] = DailySummaryRow(
+        date=signal_date,
+        signals_count=0,
+        trades_count=1,
+        wins=0,
+        losses=1,
+        realized_pnl=Decimal("-50.00"),
+        limit_hit=None,
+    )
+
+    supervisor = SignalSupervisor(
+        signal=signal,
+        broker=fake_broker,
+        state_store=fake_state,  # type: ignore[arg-type]
+        notifier=RecordingNotifier(),
+        config=config,
+    )
+
+    limit = await supervisor._check_daily_limit()
+    assert limit == "drawdown"
+
+
+@pytest.mark.asyncio
+async def test_daily_drawdown_falls_back_to_usd_when_balance_none() -> None:
+    """When broker.start_of_day_balance is None, treat drawdown_pct as USD (M6 behavior)."""
+    from datetime import datetime
+
+    from signal_copier.infra.db_rows import DailySummaryRow
+    from signal_copier.scheduler.trigger import SignalSupervisor
+
+    signal = make_signal_with_future_trigger(trigger_in_seconds=3600.0)
+    config = Config(daily_drawdown_pct=50)  # M6: USD threshold; -50 breaches it
+    signal_date = datetime.fromtimestamp(signal.trigger_unix_initial, tz=config.tz()).date()
+
+    fake_broker = FakeBroker()
+    # Don't set start_of_day_balance — getattr returns None
+    fake_state = FakeStateStore()
+    fake_state.daily_summaries[signal_date] = DailySummaryRow(
+        date=signal_date,
+        signals_count=0,
+        trades_count=1,
+        wins=0,
+        losses=1,
+        realized_pnl=Decimal("-50.00"),
+        limit_hit=None,
+    )
+
+    supervisor = SignalSupervisor(
+        signal=signal,
+        broker=fake_broker,
+        state_store=fake_state,  # type: ignore[arg-type]
+        notifier=RecordingNotifier(),
+        config=config,
+    )
+
+    limit = await supervisor._check_daily_limit()
+    assert limit == "drawdown"
