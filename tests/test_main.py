@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from signal_copier import __main__ as m5_main
+from signal_copier.broker.base import BrokerAuthError
+from signal_copier.config import Config
 
 
 def test_main_returns_2_on_config_validation_error(
@@ -274,3 +276,173 @@ def test_main_constructs_telegram_dm_notifier_when_enabled(
     assert "notifier=notifier" in source
     # The notifier must be passed to tg.start()
     assert "tg.start(notifier=notifier)" in source
+
+
+@pytest.mark.asyncio
+async def test_main_picks_dry_run_broker_when_dry_run_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DRY_RUN=true → DryRunBroker (M6 behavior unchanged)."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
+
+    from signal_copier import __main__
+
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.target_chat_id = -100
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+    fake_scheduler = MagicMock()
+    fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_scheduler.active_task_count = 0
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient") as MockTelegramClient,
+        patch.object(__main__, "DryRunBroker") as MockBroker,
+        patch.object(__main__, "Scheduler", return_value=fake_scheduler),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+        MockTelegramClient.return_value = fake_tg
+        MockBroker.return_value.connect = AsyncMock()
+        MockBroker.return_value.close = AsyncMock()
+
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(__main__._run(Config()), timeout=1.0)
+
+        # DryRunBroker was constructed
+        assert MockBroker.called
+
+
+@pytest.mark.asyncio
+async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DRY_RUN=false + OLYMP_ACCESS_TOKEN set → OlympTradeBroker constructed."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "valid-token")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "12345")
+
+    from signal_copier import __main__
+
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.target_chat_id = -100
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+    fake_scheduler = MagicMock()
+    fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_scheduler.active_task_count = 0
+
+    fake_olymp_broker = MagicMock()
+    fake_olymp_broker.connect = AsyncMock()
+    fake_olymp_broker.close = AsyncMock()
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient") as MockTelegramClient,
+        patch.object(__main__, "OlympTradeBroker", return_value=fake_olymp_broker) as MockOlymp,
+        patch.object(__main__, "Scheduler", return_value=fake_scheduler),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+        MockTelegramClient.return_value = fake_tg
+
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(__main__._run(Config()), timeout=1.0)
+
+        # OlympTradeBroker was constructed with the token
+        assert MockOlymp.called
+        call_kwargs = MockOlymp.call_args.kwargs
+        assert call_kwargs["access_token"] == "valid-token"
+        assert call_kwargs["account_id"] == "12345"
+        assert call_kwargs["account_group"] == "demo"
+
+
+def test_main_returns_2_when_olymp_token_missing_with_dry_run_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DRY_RUN=false but OLYMP_ACCESS_TOKEN empty → exit code 2."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
+
+    from signal_copier import __main__
+
+    rc = __main__.main()
+    assert rc == 2
+
+
+@pytest.mark.asyncio
+async def test_main_returns_2_when_olymp_broker_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect() raises BrokerAuthError → _run propagates (mapped to exit 2 by main())."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "valid-token")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "12345")
+
+    from signal_copier import __main__
+
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.target_chat_id = -100
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+
+    fake_olymp_broker = MagicMock()
+    fake_olymp_broker.connect = AsyncMock(side_effect=BrokerAuthError("token rejected"))
+    fake_olymp_broker.close = AsyncMock()
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient") as MockTelegramClient,
+        patch.object(__main__, "OlympTradeBroker", return_value=fake_olymp_broker),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+        MockTelegramClient.return_value = fake_tg
+
+        with pytest.raises(BrokerAuthError):
+            await __main__._run(Config())

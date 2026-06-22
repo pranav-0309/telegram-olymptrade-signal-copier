@@ -7,8 +7,9 @@ import sys
 
 from pydantic import ValidationError
 
-from signal_copier.broker.base import Broker
+from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
+from signal_copier.broker.olymp import OlympTradeBroker
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
@@ -36,6 +37,15 @@ async def _run(config: Config) -> int:
     notifier: Notifier = NoOpNotifier()
     broker: Broker | None = None
     try:
+        # M8: validate config-style broker requirements BEFORE any I/O so a
+        # missing OLYMP_ACCESS_TOKEN doesn't burn through a DB/Telegram connect.
+        if not config.dry_run and not config.olymp_access_token:
+            sys.stderr.write(
+                "❌ DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty. "
+                "Set OLYMP_ACCESS_TOKEN in .env or set DRY_RUN=true.\n"
+            )
+            return 2
+
         db = await Database.connect(config.database_url)
         tg = TelegramClient(
             api_id=config.telegram_api_id,
@@ -52,10 +62,26 @@ async def _run(config: Config) -> int:
         else:
             _log.info("Notifications: NoOpNotifier (self-DM disabled)")
 
-        # M6: build the broker. M6 uses DryRunBroker unconditionally;
-        # M8 will add the DRY_RUN=false → OlympTradeBroker branch.
-        broker = DryRunBroker()
-        await broker.connect()
+        # M8: config-driven broker selection. DRY_RUN=true keeps the M6
+        # behavior (DryRunBroker, no I/O). DRY_RUN=false uses OlympTradeBroker
+        # wrapping the vendored olymptrade_ws client.
+        if config.dry_run:
+            broker = DryRunBroker()
+            _log.info("Broker: DryRunBroker (DRY_RUN=true)")
+            await broker.connect()
+        else:
+            broker = OlympTradeBroker(
+                access_token=config.olymp_access_token,
+                account_id=config.olymp_account_id,
+                account_group=config.olymp_account_group,
+                notifier=notifier,
+            )
+            _log.info(
+                "Broker: OlympTradeBroker (live %s, account_id=%s)",
+                config.olymp_account_group,
+                config.olymp_account_id,
+            )
+            await broker.connect()
 
         signals_queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
         parse_failures = setup_parse_failures_log(config.log_path.parent)
@@ -144,6 +170,9 @@ def main() -> int:
         return 1
     except TelegramConfigError as exc:
         sys.stderr.write(f"❌ {exc}\n")
+        return 2
+    except BrokerAuthError as exc:
+        sys.stderr.write(f"❌ OlympTradeBroker failed to connect: {exc}\n")
         return 2
     except KeyboardInterrupt:
         print("\n🔴 signal_copier stopping (SIGINT)")
