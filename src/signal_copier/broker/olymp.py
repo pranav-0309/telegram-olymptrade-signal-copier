@@ -22,13 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from decimal import Decimal
 
-from olymptrade_ws import OlympTradeClient  # noqa: F401  (used by future tasks)
+from olymptrade_ws import OlympTradeClient
+from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import (  # noqa: F401  (referenced in class docstring; used by future tasks)
     BrokerAuthError,
     UnsupportedPairError,
 )
+from signal_copier.domain.state import StageResult
 from signal_copier.notify.protocol import Notifier
 
 _log = logging.getLogger(__name__)
@@ -56,6 +59,23 @@ def _normalize_key(broker_pair: str) -> str:
     return broker_pair
 
 
+def _map_status(status: str | None) -> StageResult:
+    """Map broker status string to StageResult literal.
+
+    Broker status values observed in upstream logs:
+      - "win"     → trade closed in profit
+      - "loss"    → trade closed in loss
+      - "tie"     → broker reports tie (rare; treated as loss for cascade)
+      - "equal"   → alternate broker spelling of tie
+      - anything else → 'error' (cascade ends with broker_unavailable)
+    """
+    if status == "win":
+        return "win"
+    if status in {"loss", "tie", "equal"}:
+        return "loss"
+    return "error"
+
+
 class OlympTradeBroker:
     """Real broker implementation wrapping the vendored olymptrade_ws client.
 
@@ -80,6 +100,7 @@ class OlympTradeBroker:
         account_id: str,
         account_group: str = "demo",
         notifier: Notifier,
+        _client_factory: Callable[[], OlympTradeClient] | None = None,
     ) -> None:
         if not access_token:
             raise ValueError("OlympTradeBroker: access_token is required")
@@ -87,6 +108,7 @@ class OlympTradeBroker:
         self._account_id = account_id
         self._account_group = account_group
         self._notifier = notifier
+        self._client_factory = _client_factory or self._default_client_factory
         self._client: OlympTradeClient | None = None
         self._assets: dict[str, tuple[str, str]] = {}
         self._pending: dict[str, asyncio.Future[dict[str, object]]] = {}
@@ -94,3 +116,78 @@ class OlympTradeBroker:
         self._pending_lock = asyncio.Lock()
         self._start_of_day_balance: Decimal | None = None
         self._connected = False
+
+    def _default_client_factory(self) -> OlympTradeClient:
+        return OlympTradeClient(
+            access_token=self._access_token,
+            account_id=int(self._account_id) if self._account_id else None,  # type: ignore[arg-type]
+            account_group=self._account_group,
+            log_raw_messages=False,
+        )
+
+    async def connect(self) -> None:
+        """Open WS, register push callbacks, fetch asset map, cache balance.
+
+        Idempotent: a second call is a no-op. Raises BrokerAuthError if:
+          - vendored client's WS start fails (auth rejected, network error)
+          - asset map (e:1068 push) doesn't arrive within 15s
+          - asset map arrives but contains no usable assets
+          - account_group reported by broker != configured account_group
+        """
+        if self._connected:
+            return
+
+        # 1. Build vendored client (sync factory call)
+        self._client = self._client_factory()
+
+        # 2. Open the WebSocket
+        await self._client.start()  # type: ignore[no-untyped-call]
+
+        # 3. Register persistent push callbacks BEFORE initialize_session
+        self._client.register_callback(parameters.E_TRADE_CLOSED, self._on_trade_closed)
+        self._client.register_callback(parameters.E_TRADE_ACCEPTED, self._on_trade_accepted)
+        self._client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, self._on_trade_interim)
+
+        # 4. Send startup subscriptions + account-info + balance requests
+        await self._client.initialize_session()  # type: ignore[no-untyped-call]
+
+        # 5. Build the asset map from the e:1068 push
+        await self._build_asset_map()
+
+        # 6. Guardrail: vendored client must agree with config on account group
+        if self._client.account_group != self._account_group:
+            raise BrokerAuthError(
+                f"broker reports account_group={self._client.account_group!r} "
+                f"but config says {self._account_group!r}"
+            )
+
+        # 7. Cache start-of-day balance for FR-6.3 drawdown calculation
+        await self._cache_start_of_day_balance()
+
+        self._connected = True
+        _log.info(
+            "OlympTradeBroker connected: account_id=%s group=%s assets=%d",
+            self._account_id,
+            self._account_group,
+            len(self._assets),
+        )
+
+    async def _build_asset_map(self) -> None:
+        """Stub — implemented in Task 7."""
+        return None
+
+    async def _cache_start_of_day_balance(self) -> None:
+        """Stub — implemented in Task 8."""
+        return None
+
+    async def _on_trade_closed(self, message: dict[str, object]) -> None:
+        """Stub — implemented in Task 10."""
+        return None
+
+    async def _on_trade_accepted(self, message: dict[str, object]) -> None:
+        """Stub — implemented in Task 11."""
+        return None
+
+    async def _on_trade_interim(self, message: dict[str, object]) -> None:
+        """Stub — implemented in Task 11."""
+        return None
