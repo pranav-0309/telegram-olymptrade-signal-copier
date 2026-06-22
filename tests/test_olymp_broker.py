@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import unittest.mock
 from decimal import Decimal
 
@@ -507,3 +508,47 @@ async def test_on_trade_closed_ignores_duplicate_delivery(
     )
     # No exception
     assert "12345" in broker._results
+
+
+# --- _on_trade_accepted / _on_trade_interim tests (Task 11) ---------------
+
+
+async def test_on_trade_accepted_logs_only(
+    notifier: RecordingNotifier, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_ACCEPTED, broker._on_trade_accepted)
+    broker._connected = True
+
+    with caplog.at_level(logging.INFO):
+        await fake_client._deliver_event(
+            parameters.E_TRADE_ACCEPTED,
+            {"d": [{"id": 12345}]},
+        )
+
+    assert any("e:22" in record.message for record in caplog.records)
+    # No state mutation
+    assert broker._pending == {}
+    assert broker._results == {}
+
+
+async def test_on_trade_interim_logs_only(
+    notifier: RecordingNotifier, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, broker._on_trade_interim)
+    broker._connected = True
+
+    with caplog.at_level(logging.INFO):
+        await fake_client._deliver_event(
+            parameters.E_TRADE_UPDATE_INTERIM,
+            {"d": [{"id": 12345, "interim_status": "open"}]},
+        )
+
+    assert any("e:21" in record.message for record in caplog.records)
+    assert broker._pending == {}
+    assert broker._results == {}

@@ -307,12 +307,31 @@ class OlympTradeBroker:
         )
 
     async def _on_trade_accepted(self, message: dict[str, object]) -> None:
-        """Stub — implemented in Task 11."""
-        return None
+        """e:22 — trade-placed acknowledgement from broker.
+
+        Informational only. We already got the trade_id from place_order()'s
+        response; e:22 confirms the broker registered the order.
+        """
+        trade_data = message.get("d", [])
+        if isinstance(trade_data, list) and trade_data:
+            info = trade_data[0]
+            if isinstance(info, dict) and info.get("id") is not None:
+                _log.info("e:22 trade accepted: trade_id=%s", info["id"])
 
     async def _on_trade_interim(self, message: dict[str, object]) -> None:
-        """Stub — implemented in Task 11."""
-        return None
+        """e:21 — interim trade update (live balance during the trade).
+
+        Informational only. Does not mutate state.
+        """
+        trade_data = message.get("d", [])
+        if isinstance(trade_data, list) and trade_data:
+            info = trade_data[0]
+            if isinstance(info, dict) and info.get("id") is not None:
+                _log.info(
+                    "e:21 trade interim: trade_id=%s interim_status=%s",
+                    info["id"],
+                    info.get("interim_status"),
+                )
 
     async def place(
         self,
