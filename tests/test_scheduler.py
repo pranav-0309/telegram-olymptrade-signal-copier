@@ -757,14 +757,20 @@ async def test_notifier_exception_does_not_abort_cascade() -> None:
 
 @pytest.mark.asyncio
 async def test_daily_drawdown_uses_percentage_of_start_of_day_balance() -> None:
-    """When broker.start_of_day_balance is set, drawdown_pct is a percentage."""
+    """When broker.start_of_day_balance is set, drawdown_pct is a percentage.
+
+    Discriminating test: under M8 (percentage), 4% of 1000 = 40 threshold;
+    realized_pnl=-30 is NOT below 40, so no drawdown. Under M6 (USD),
+    pct=4 means -4 threshold; -30 IS below -4, so drawdown. The None
+    assertion uniquely verifies percentage semantics.
+    """
     from datetime import datetime
 
     from signal_copier.infra.db_rows import DailySummaryRow
     from signal_copier.scheduler.trigger import SignalSupervisor
 
     signal = make_signal_with_future_trigger(trigger_in_seconds=3600.0)
-    config = Config(daily_drawdown_pct=4)  # 4% of 1000 = 40 threshold; -50 breaches it
+    config = Config(daily_drawdown_pct=4)  # M8 threshold: 4% of 1000 = 40
     signal_date = datetime.fromtimestamp(signal.trigger_unix_initial, tz=config.tz()).date()
 
     fake_broker = FakeBroker()
@@ -776,7 +782,7 @@ async def test_daily_drawdown_uses_percentage_of_start_of_day_balance() -> None:
         trades_count=1,
         wins=0,
         losses=1,
-        realized_pnl=Decimal("-50.00"),
+        realized_pnl=Decimal("-30.00"),
         limit_hit=None,
     )
 
@@ -789,7 +795,9 @@ async def test_daily_drawdown_uses_percentage_of_start_of_day_balance() -> None:
     )
 
     limit = await supervisor._check_daily_limit()
-    assert limit == "drawdown"
+    # M8: -30 > -40 → no breach → None
+    # M6 (regression): -30 <= -4 → breach → "drawdown" (would fail this)
+    assert limit is None
 
 
 @pytest.mark.asyncio
