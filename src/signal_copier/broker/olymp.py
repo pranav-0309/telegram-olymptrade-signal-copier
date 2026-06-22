@@ -173,8 +173,50 @@ class OlympTradeBroker:
         )
 
     async def _build_asset_map(self) -> None:
-        """Stub — implemented in Task 7."""
-        return None
+        """One-shot capture of the e:1068 asset list during initialize_session().
+
+        The vendored client's initialize_session() triggers an e:1068 push.
+        We capture it via a temporary callback registered before the timeout.
+
+        Times out after 15s. On timeout, every place() will fail. Fail loud.
+        """
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[list[object]] = loop.create_future()
+
+        async def capture(message: dict[str, object]) -> None:
+            if not future.done():
+                future.set_result(message.get("d", []))
+
+        self._client.register_callback(ASSET_LIST_EVENT, capture)
+        try:
+            raw_assets = await asyncio.wait_for(future, timeout=15.0)
+        except TimeoutError as exc:
+            raise BrokerAuthError(
+                "asset map: e:1068 push did not arrive within 15s of initialize_session()"
+            ) from exc
+        finally:
+            self._client.unregister_callback(ASSET_LIST_EVENT, capture)
+
+        for asset in raw_assets:
+            if not isinstance(asset, dict):
+                continue
+            broker_pair = asset.get("pair")
+            if not isinstance(broker_pair, str):
+                continue
+            category = asset.get("cat", "digital")
+            if not isinstance(category, str):
+                category = "digital"
+            key = _normalize_key(broker_pair)
+            self._assets[key] = (broker_pair, category)
+
+        if not self._assets:
+            raise BrokerAuthError("asset map: e:1068 push arrived but contained no usable assets")
+
+        _log.info(
+            "asset map built: %d entries (sample: %s)",
+            len(self._assets),
+            list(self._assets.keys())[:5],
+        )
 
     async def _cache_start_of_day_balance(self) -> None:
         """Stub — implemented in Task 8."""

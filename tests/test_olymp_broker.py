@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from signal_copier.broker.olymp import OlympTradeBroker, _map_status, _normalize_key
+from signal_copier.broker.base import BrokerAuthError
+from signal_copier.broker.olymp import (
+    ASSET_LIST_EVENT,
+    OlympTradeBroker,
+    _map_status,
+    _normalize_key,
+)
 from tests._broker_fixtures import FakeOlympTradeClient
 from tests._scheduler_fixtures import RecordingNotifier
 
@@ -137,3 +145,89 @@ async def test_connect_is_idempotent(notifier: RecordingNotifier) -> None:
     await broker.connect()
     await broker.connect()
     assert state["start_calls"] == 1
+
+
+async def test_build_asset_map_populates_assets(notifier: RecordingNotifier) -> None:
+    """Captures the e:1068 push and populates the asset map."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client  # normally set by connect()
+
+    # Schedule an e:1068 delivery to fire shortly after _build_asset_map starts
+    async def deliver_assets() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(
+            ASSET_LIST_EVENT,
+            {"d": [{"pair": "EURJPY", "cat": "forex"}, {"pair": "GBPUSD-OTC", "cat": "otc"}]},
+        )
+
+    asyncio.create_task(deliver_assets())
+    await broker._build_asset_map()
+
+    assert broker._assets == {
+        "EUR/JPY": ("EURJPY", "forex"),
+        "GBP/USD": ("GBPUSD-OTC", "otc"),
+    }
+
+
+async def test_build_asset_map_timeout_raises_broker_auth_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """No e:1068 push within 15s → BrokerAuthError.
+
+    We patch asyncio.wait_for to simulate the timeout without actually waiting 15s.
+    """
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client  # normally set by connect()
+    import unittest.mock as _mock
+
+    with (
+        _mock.patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
+        pytest.raises(BrokerAuthError, match="asset map"),
+    ):
+        await broker._build_asset_map()
+
+
+async def test_build_asset_map_empty_raises_broker_auth_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """e:1068 arrives with empty list → BrokerAuthError."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client  # normally set by connect()
+
+    async def deliver_empty() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(ASSET_LIST_EVENT, {"d": []})
+
+    asyncio.create_task(deliver_empty())
+    with pytest.raises(BrokerAuthError, match="no usable assets"):
+        await broker._build_asset_map()
+
+
+async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifier) -> None:
+    """Entries missing 'pair' are skipped; valid entries still land in the map."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client  # normally set by connect()
+
+    async def deliver_mixed() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(
+            ASSET_LIST_EVENT,
+            {
+                "d": [
+                    {"pair": "EURJPY", "cat": "forex"},
+                    {"cat": "forex"},  # missing 'pair'
+                    "not-a-dict",
+                    {"pair": "GBPUSD", "cat": "forex"},
+                ]
+            },
+        )
+
+    asyncio.create_task(deliver_mixed())
+    await broker._build_asset_map()
+
+    assert "EUR/JPY" in broker._assets
+    assert "GBP/USD" in broker._assets
