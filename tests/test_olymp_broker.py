@@ -6,14 +6,14 @@ from decimal import Decimal
 
 import pytest
 
-from signal_copier.broker.base import BrokerAuthError
+from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
     OlympTradeBroker,
     _map_status,
     _normalize_key,
 )
-from tests._broker_fixtures import FakeOlympTradeClient
+from tests._broker_fixtures import FakeOlympTradeClient, make_signal
 from tests._scheduler_fixtures import RecordingNotifier
 
 
@@ -274,3 +274,137 @@ async def test_cache_start_of_day_balance_skips_wrong_group(
     broker._client = fake_client
     await broker._cache_start_of_day_balance()
     assert broker._start_of_day_balance is None
+
+
+# --- place() tests (Task 9) -----------------------------------------------
+
+
+async def test_place_resolves_pair_via_asset_map(notifier: RecordingNotifier) -> None:
+    """EUR/JPY → fake.place_order called with pair='EURJPY', category='forex'."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal(pair="EUR/JPY", direction="down")
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    assert len(fake_client.trade.place_order_calls) == 1
+    call = fake_client.trade.place_order_calls[0]
+    assert call["pair"] == "EURJPY"
+    assert call["category"] == "forex"
+    assert call["direction"] == "down"
+    assert call["amount"] == 2.00  # float conversion for vendored client
+    assert trade_id == str(call["id"])
+
+
+async def test_place_otc_pair_resolves_correctly(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY-OTC", "otc")}
+
+    sig = make_signal(pair="EUR/JPY", direction="up")
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    call = fake_client.trade.place_order_calls[0]
+    assert call["pair"] == "EURJPY-OTC"
+    assert call["category"] == "otc"
+    assert isinstance(trade_id, str)
+
+
+async def test_place_unsupported_pair_raises(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal(pair="USD/EGP")
+    with pytest.raises(UnsupportedPairError, match="USD/EGP"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_place_records_pending_future(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    assert trade_id in broker._pending
+    assert broker._pending[trade_id] is not None
+
+
+async def test_place_returns_broker_trade_id_as_string(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.next_response = {"id": 12345, "status": "open"}
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+    assert trade_id == "12345"
+
+
+async def test_place_none_response_raises_broker_auth_error(
+    notifier: RecordingNotifier,
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.next_response = None
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    with pytest.raises(BrokerAuthError, match="returned None"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_place_missing_id_in_response_raises(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.next_response = {"status": "win"}
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    with pytest.raises(BrokerAuthError, match="missing 'id'"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_place_connection_error_propagates(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.raise_on_call = ConnectionError("WS down")
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    with pytest.raises(ConnectionError, match="WS down"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_place_before_connect_raises_broker_auth_error(
+    notifier: RecordingNotifier,
+) -> None:
+    broker = OlympTradeBroker(
+        access_token="fake",
+        account_id="12345",
+        account_group="demo",
+        notifier=notifier,
+    )
+    # Note: no _client wiring, no _connected=True
+    sig = make_signal()
+    with pytest.raises(BrokerAuthError, match="before connect"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))

@@ -17,6 +17,11 @@ from typing import Any
 
 from signal_copier.domain.signal import Signal
 
+# Sentinel for FakeTradeAPI.next_response meaning "generate default response".
+# Using a sentinel (rather than None) lets tests distinguish "no override"
+# from "return None" — the latter exercises the broker-auth-failed path.
+_DEFAULT_RESPONSE = object()
+
 
 class FakeConnection:
     """Stub for olymptrade_ws.core.connection.Connection."""
@@ -30,22 +35,40 @@ class FakeConnection:
 
 
 class FakeTradeAPI:
-    """Stub for olymptrade_ws.api.trade.TradeAPI. .place_order(...) recorder."""
+    """Stub for olymptrade_ws.api.trade.TradeAPI. .place_order(...) recorder.
+
+    `next_response` controls what `place_order` returns:
+      - default (`_DEFAULT_RESPONSE` sentinel): generate {id: next_trade_id, status: open}
+      - dict: return that dict verbatim (so tests can set {"id": 12345, "status": "open"})
+      - None: return None (lets tests exercise the "token rejected" path)
+
+    Recorded calls include the response's `id` field merged into the kwargs
+    dict, so tests can correlate broker_trade_id with the recorded call.
+    """
 
     def __init__(self, client: FakeOlympTradeClient) -> None:
         self._client = client
         self.place_order_calls: list[dict[str, Any]] = []
-        self.next_response: dict[str, Any] | None = None
+        self.next_response: Any = _DEFAULT_RESPONSE
         self.raise_on_call: BaseException | None = None
 
     async def place_order(self, **kwargs: Any) -> dict[str, Any] | None:
-        self.place_order_calls.append(kwargs)
         if self.raise_on_call is not None:
+            self.place_order_calls.append(kwargs)
             raise self.raise_on_call
-        if self.next_response is not None:
-            return self.next_response
-        self._client._next_trade_id += 1
-        return {"id": self._client._next_trade_id, "status": "open"}
+        if self.next_response is _DEFAULT_RESPONSE:
+            self._client._next_trade_id += 1
+            response: dict[str, Any] | None = {
+                "id": self._client._next_trade_id,
+                "status": "open",
+            }
+        else:
+            response = self.next_response
+        recorded: dict[str, Any] = dict(kwargs)
+        if response is not None:
+            recorded["id"] = response.get("id")
+        self.place_order_calls.append(recorded)
+        return response
 
 
 class FakeOlympTradeClient:

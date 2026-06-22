@@ -24,13 +24,16 @@ import asyncio
 import logging
 from collections.abc import Callable
 from decimal import Decimal
+from typing import Literal, cast
 
 from olymptrade_ws import OlympTradeClient
 from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import (
     BrokerAuthError,
-    UnsupportedPairError,  # noqa: F401  (used by future Task 9: place())
+    UnsupportedPairError,
 )
+from signal_copier.domain.gale import Stage
+from signal_copier.domain.signal import Signal
 from signal_copier.domain.state import StageResult
 from signal_copier.notify.protocol import Notifier
 
@@ -277,3 +280,70 @@ class OlympTradeBroker:
     async def _on_trade_interim(self, message: dict[str, object]) -> None:
         """Stub — implemented in Task 11."""
         return None
+
+    async def place(
+        self,
+        signal: Signal,
+        *,
+        stage: Stage,
+        amount: Decimal,
+    ) -> str:
+        """Submit a trade for `signal` at `stage` for `amount` USD.
+
+        Returns the broker's trade_id as a string. Registers a Future in
+        `_pending` keyed by trade_id; the e:26 callback resolves it.
+
+        Raises:
+          BrokerAuthError: client not connected, response is None or
+            missing 'id'.
+          UnsupportedPairError: signal.pair not in the cached asset map.
+          ConnectionError: vendored client raised it (propagated).
+        """
+        if not self._connected or self._client is None:
+            raise BrokerAuthError("place() called before connect()")
+
+        key = signal.pair
+        if key not in self._assets:
+            raise UnsupportedPairError(
+                f"{key!r} not in broker asset map ({len(self._assets)} available)"
+            )
+        broker_pair, category = self._assets[key]
+        client = self._client
+
+        response = await client.trade.place_order(
+            pair=broker_pair,
+            amount=float(amount),
+            direction=signal.direction,
+            duration=signal.expiration_seconds,
+            account_id=int(self._account_id),
+            group=cast(Literal["real", "demo"], self._account_group),
+            category=category,
+        )
+
+        if response is None:
+            raise BrokerAuthError("place_order returned None (token rejected?)")
+        trade_id = response.get("id")
+        if trade_id is None:
+            raise BrokerAuthError(f"place_order response missing 'id': {response!r}")
+        broker_trade_id = str(trade_id)
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, object]] = loop.create_future()
+        async with self._pending_lock:
+            if broker_trade_id in self._pending:
+                _log.warning(
+                    "duplicate broker trade_id=%s; replacing pending future",
+                    broker_trade_id,
+                )
+            self._pending[broker_trade_id] = future
+
+        _log.info(
+            "place: signal_id=%s pair=%s→%s stage=%s amount=%s broker_trade_id=%s",
+            signal.signal_id,
+            signal.pair,
+            broker_pair,
+            stage,
+            amount,
+            broker_trade_id,
+        )
+        return broker_trade_id
