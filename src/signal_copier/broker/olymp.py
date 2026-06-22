@@ -270,8 +270,41 @@ class OlympTradeBroker:
         self._start_of_day_balance = None
 
     async def _on_trade_closed(self, message: dict[str, object]) -> None:
-        """Stub — implemented in Task 10."""
-        return None
+        """Persistent e:26 callback. Resolves the matching per-trade Future.
+
+        Race handling: e:26 may arrive BEFORE wait_result() is called. In
+        that case, _pending has no entry, and we cache the payload in
+        _results so wait_result's first check finds it.
+        """
+        trade_data = message.get("d", [])
+        if not isinstance(trade_data, list) or not trade_data:
+            return
+        info = trade_data[0]
+        if not isinstance(info, dict):
+            return
+        raw_id = info.get("id")
+        if raw_id is None:
+            return
+        broker_trade_id = str(raw_id)
+
+        status = info.get("status")
+        pnl = info.get("balance_change")
+        stage_result = _map_status(status if isinstance(status, str) else None)
+        pnl_decimal = Decimal(str(pnl)) if pnl is not None else Decimal("0.00")
+
+        async with self._pending_lock:
+            future = self._pending.get(broker_trade_id)
+            if future is not None and not future.done():
+                future.set_result({"result": stage_result, "pnl": pnl_decimal})
+                return
+            # Future is None (wait_result hasn't been called yet — race) OR
+            # future is done (duplicate e:26). Cache for late wait_result.
+            self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
+        _log.info(
+            "e:26 cached for late wait_result: trade_id=%s status=%s",
+            broker_trade_id,
+            status,
+        )
 
     async def _on_trade_accepted(self, message: dict[str, object]) -> None:
         """Stub — implemented in Task 11."""

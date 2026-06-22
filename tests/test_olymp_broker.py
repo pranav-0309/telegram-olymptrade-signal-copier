@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
@@ -408,3 +409,101 @@ async def test_place_before_connect_raises_broker_auth_error(
     sig = make_signal()
     with pytest.raises(BrokerAuthError, match="before connect"):
         await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+# --- _on_trade_closed tests (Task 10) --------------------------------------
+
+
+async def test_on_trade_closed_resolves_pending_future(
+    notifier: RecordingNotifier,
+) -> None:
+    """Delivering e:26 with matching trade_id resolves the pending Future."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    # Deliver e:26 BEFORE wait_result — covers the race
+    await fake_client._deliver_event(
+        parameters.E_TRADE_CLOSED,
+        {"d": [{"id": int(trade_id), "status": "win", "balance_change": 1.84}]},
+    )
+
+    future = broker._pending[trade_id]
+    assert future.done()
+    result = future.result()
+    assert result["result"] == "win"
+    assert result["pnl"] == Decimal("1.84")
+
+
+async def test_on_trade_closed_caches_when_no_pending(notifier: RecordingNotifier) -> None:
+    """Delivering e:26 with NO pending entry caches to _results for late wait_result."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+
+    # No place() called — _pending is empty
+    await fake_client._deliver_event(
+        parameters.E_TRADE_CLOSED,
+        {"d": [{"id": 99999, "status": "loss", "balance_change": -2.0}]},
+    )
+
+    assert "99999" in broker._results
+    assert broker._results["99999"]["result"] == "loss"
+
+
+async def test_on_trade_closed_ignores_empty_d_list(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+
+    await fake_client._deliver_event(parameters.E_TRADE_CLOSED, {"d": []})
+    # No exception; no state mutation
+    assert broker._pending == {}
+    assert broker._results == {}
+
+
+async def test_on_trade_closed_ignores_missing_id(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+
+    await fake_client._deliver_event(parameters.E_TRADE_CLOSED, {"d": [{"status": "win"}]})
+    assert broker._pending == {}
+    assert broker._results == {}
+
+
+async def test_on_trade_closed_ignores_duplicate_delivery(
+    notifier: RecordingNotifier,
+) -> None:
+    """Second e:26 for the same trade_id is a no-op (WARNING logged)."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+
+    await fake_client._deliver_event(
+        parameters.E_TRADE_CLOSED,
+        {"d": [{"id": 12345, "status": "win", "balance_change": 1.84}]},
+    )
+    assert "12345" in broker._results
+
+    # Second delivery — _results already has it
+    await fake_client._deliver_event(
+        parameters.E_TRADE_CLOSED,
+        {"d": [{"id": 12345, "status": "win", "balance_change": 1.84}]},
+    )
+    # No exception
+    assert "12345" in broker._results
