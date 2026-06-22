@@ -44,7 +44,7 @@ def test_constructor_rejects_empty_access_token() -> None:
         )
 
 
-def test_constructor_initializes_state(notifier) -> None:
+def test_constructor_initializes_state(notifier: RecordingNotifier) -> None:
     broker = OlympTradeBroker(
         access_token="fake",
         account_id="12345",
@@ -59,7 +59,7 @@ def test_constructor_initializes_state(notifier) -> None:
     assert broker._start_of_day_balance is None
 
 
-def test_constructor_stores_config(notifier) -> None:
+def test_constructor_stores_config(notifier: RecordingNotifier) -> None:
     broker = OlympTradeBroker(
         access_token="fake",
         account_id="99999",
