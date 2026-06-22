@@ -143,8 +143,8 @@ async def test_connect_is_idempotent(notifier: RecordingNotifier) -> None:
     fake_client.start = counting_start  # type: ignore[method-assign]
 
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
-    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+    broker._build_asset_map = _async_noop
+    broker._cache_start_of_day_balance = _async_noop
 
     await broker.connect()
     await broker.connect()
@@ -786,8 +786,8 @@ async def test_connect_registers_three_callbacks(notifier: RecordingNotifier) ->
     """connect() registers e:21/e:22/e:26 callbacks on the vendored client."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
-    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+    broker._build_asset_map = _async_noop
+    broker._cache_start_of_day_balance = _async_noop
 
     await broker.connect()
 
@@ -806,10 +806,11 @@ async def test_connect_registers_three_callbacks(notifier: RecordingNotifier) ->
 
 
 async def test_connect_calls_initialize_session(notifier: RecordingNotifier) -> None:
+    """connect() calls initialize_session() on the vendored client."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
-    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+    broker._build_asset_map = _async_noop
+    broker._cache_start_of_day_balance = _async_noop
 
     await broker.connect()
 
@@ -820,8 +821,8 @@ async def test_connect_account_group_mismatch_raises(notifier: RecordingNotifier
     """Broker reports different account_group than configured → BrokerAuthError."""
     fake_client = FakeOlympTradeClient(account_group="real")
     broker = _make_broker(notifier, fake_client=fake_client, account_group="demo")
-    broker._build_asset_map = _async_noop  # type: ignore[method-assign]
-    broker._cache_start_of_day_balance = _async_noop  # type: ignore[method-assign]
+    broker._build_asset_map = _async_noop
+    broker._cache_start_of_day_balance = _async_noop
 
     with pytest.raises(BrokerAuthError, match="account_group"):
         await broker.connect()
