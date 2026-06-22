@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.30",           # M4: async PostgreSQL driver
     "telethon>=1.44",          # M5: Telegram MTProto user-account client
     "loguru>=0.7,<1.0",        # M7: rotating loguru sinks + DM mirror
+    "websockets>=16.0",
 ]
 
 [project.scripts]
