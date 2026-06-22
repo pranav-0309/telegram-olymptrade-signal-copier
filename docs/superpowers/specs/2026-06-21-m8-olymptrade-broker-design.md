@@ -349,9 +349,6 @@ async def wait_result(
     *,
     timeout: float,
 ) -> StageResult:
-    if not self._connected:
-        raise BrokerAuthError("wait_result() called before connect()")
-
     # 1. Check _results first (handles the race where e:26 arrived before
     # wait_result was called). _on_trade_closed stored the result there.
     async with self._pending_lock:
@@ -359,14 +356,20 @@ async def wait_result(
             payload = self._results.pop(trade_id)
             return _map_status(payload.get("result", "error"))
         future = self._pending.get(trade_id)
+
+    # 2. Reject only if there is no future at all AND we never connected
+    # (or we're in a fully post-close state for a trade we never placed).
+    # M8 fix: moved the _connected check here from the top of the function.
+    # Otherwise a call to wait_result() after close() (with a pending
+    # future that close() cancelled) would raise BrokerAuthError before
+    # reaching the future, masking the CancelledError the caller wants.
     if future is None:
-        # Either caller bug (unknown trade_id) or e:26 arrived and was
-        # consumed by a previous wait_result call. M3 contract: surface
-        # as 'error'.
+        if not self._connected:
+            raise BrokerAuthError("wait_result() called before connect()")
         _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
         return "error"
 
-    # 2. Await the future with FR-5.3 timeout
+    # 3. Await the future with FR-5.3 timeout
     try:
         payload = await asyncio.wait_for(future, timeout=timeout)
     except TimeoutError:
@@ -380,12 +383,15 @@ async def wait_result(
             raise ConnectionError("olymp_disconnected") from None
         _log.warning("wait_result timeout: trade_id=%s timeout=%.1fs", trade_id, timeout)
         return "timeout"
-    except asyncio.CancelledError:
-        # close() cancelled our future. Treat as disconnect.
-        await self._notifier.on_olymp_disconnect()
-        raise ConnectionError("olymp_disconnected") from None
+    # Note: asyncio.CancelledError is intentionally NOT caught here.
+    # close() cancels pending futures; that CancelledError should
+    # propagate to the caller so they can distinguish a clean shutdown
+    # from a network disconnect (which is converted to ConnectionError
+    # above). The M3 contract is a StageResult for normal flow; raising
+    # CancelledError is the asyncio-idiomatic way to signal
+    # out-of-band cancellation.
 
-    # 3. Clean up and map to StageResult (defensive: default to 'error').
+    # 4. Clean up and map to StageResult (defensive: default to 'error').
     async with self._pending_lock:
         self._pending.pop(trade_id, None)
     return _map_status(payload.get("result", "error"))
@@ -501,17 +507,22 @@ async def close(self) -> None:
         await self._client.stop()
     finally:
         self._connected = False
-        # Cancel any pending futures so wait_result callers don't hang
+        # Cancel any pending futures so wait_result callers don't hang.
+        # M8 fix: do NOT clear _pending — keep the cancelled futures
+        # in place so a subsequent wait_result(trade_id) finds the
+        # future, awaits it, and propagates CancelledError to the
+        # caller. This lets callers distinguish a clean shutdown
+        # (CancelledError) from a network disconnect (ConnectionError).
+        # Cleanup happens lazily in wait_result's success path.
         async with self._pending_lock:
             for future in self._pending.values():
                 if not future.done():
                     future.cancel("OlympTradeBroker closed")
-            self._pending.clear()
             self._results.clear()
         _log.info("OlympTradeBroker closed")
 ```
 
-The vendored client's `stop()` (olymptrade_ws/core/client.py:63-91) cancels `_ping_task` and `_processing_task`, then disconnects the WS. The pending futures get cancelled here in `close()` so callers' `wait_for` raises `CancelledError` immediately rather than waiting for the timeout. `_results` is also cleared so a stale cached result cannot bleed into a reconnected session.
+The vendored client's `stop()` (olymptrade_ws/core/client.py:63-91) cancels `_ping_task` and `_processing_task`, then disconnects the WS. The pending futures get cancelled here in `close()` so callers' `wait_for` raises `CancelledError` immediately rather than waiting for the timeout. `_results` is cleared so a stale cached result cannot bleed into a reconnected session. Cancelled futures stay in `_pending` until the next `wait_result(trade_id)` call for that trade_id (which then awaits the cancelled future and propagates `CancelledError`); this is the asyncio-idiomatic cancellation pattern.
 
 ### 5.10 `_cache_start_of_day_balance()` (private, async)
 
