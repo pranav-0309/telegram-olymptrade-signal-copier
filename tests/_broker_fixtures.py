@@ -114,7 +114,7 @@ def make_signal(
         source_message_id=1,
         source_chat_id=1,
         raw_text=f"{pair};10:20;PUT🟥",
-        trigger_unix_initial=1_700_000_300.0,
+        trigger_unix_initial=1_700_000_000.0,
         trigger_unix_gale1=1_700_000_300.0,
         trigger_unix_gale2=1_700_000_600.0,
     )
