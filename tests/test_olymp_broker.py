@@ -552,3 +552,162 @@ async def test_on_trade_interim_logs_only(
     assert any("e:21" in record.message for record in caplog.records)
     assert broker._pending == {}
     assert broker._results == {}
+
+
+# --- wait_result() tests (Task 12) -----------------------------------------
+
+
+async def test_wait_result_resolves_on_e26_win(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    async def deliver() -> None:
+        await asyncio.sleep(0.01)
+        await fake_client._deliver_event(
+            parameters.E_TRADE_CLOSED,
+            {"d": [{"id": int(trade_id), "status": "win", "balance_change": 1.84}]},
+        )
+
+    asyncio.create_task(deliver())
+    result = await broker.wait_result(trade_id, timeout=2.0)
+    assert result == "win"
+
+
+async def test_wait_result_resolves_on_e26_loss(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    async def deliver() -> None:
+        await asyncio.sleep(0.01)
+        await fake_client._deliver_event(
+            parameters.E_TRADE_CLOSED,
+            {"d": [{"id": int(trade_id), "status": "loss", "balance_change": -2.0}]},
+        )
+
+    asyncio.create_task(deliver())
+    result = await broker.wait_result(trade_id, timeout=2.0)
+    assert result == "loss"
+
+
+async def test_wait_result_resolves_on_e26_tie(notifier: RecordingNotifier) -> None:
+    """tie → loss (FR-5.3 cascade treatment)."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    async def deliver() -> None:
+        await asyncio.sleep(0.01)
+        await fake_client._deliver_event(
+            parameters.E_TRADE_CLOSED,
+            {"d": [{"id": int(trade_id), "status": "tie"}]},
+        )
+
+    asyncio.create_task(deliver())
+    result = await broker.wait_result(trade_id, timeout=2.0)
+    assert result == "loss"
+
+
+async def test_wait_result_resolves_after_e26_already_arrived(
+    notifier: RecordingNotifier,
+) -> None:
+    """Race recovery: e:26 cached in _results when wait_result is called."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    # Deliver e:26 BEFORE wait_result
+    await fake_client._deliver_event(
+        parameters.E_TRADE_CLOSED,
+        {"d": [{"id": int(trade_id), "status": "win", "balance_change": 1.84}]},
+    )
+
+    result = await broker.wait_result(trade_id, timeout=2.0)
+    assert result == "win"
+    # _results popped
+    assert trade_id not in broker._results
+
+
+async def test_wait_result_timeout_when_connected_returns_timeout(
+    notifier: RecordingNotifier,
+) -> None:
+    fake_client = FakeOlympTradeClient()
+    fake_client.connection._connected = True
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    result = await broker.wait_result(trade_id, timeout=0.05)
+    assert result == "timeout"
+
+
+async def test_wait_result_timeout_when_disconnected_raises(
+    notifier: RecordingNotifier,
+) -> None:
+    """Disconnection mid-trade → ConnectionError after DM-notify on_olymp_disconnect."""
+    fake_client = FakeOlympTradeClient()
+    fake_client.connection._connected = False  # broker disconnected
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    with pytest.raises(ConnectionError, match="olymp_disconnected"):
+        await broker.wait_result(trade_id, timeout=0.05)
+
+    # Notifier was called
+    method_names = [m for m, _ in notifier.calls]
+    assert "on_olymp_disconnect" in method_names
+
+
+async def test_wait_result_unknown_trade_id_returns_error(notifier: RecordingNotifier) -> None:
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    broker._client = fake_client
+    broker._connected = True
+
+    result = await broker.wait_result("nope", timeout=2.0)
+    assert result == "error"
+
+
+async def test_wait_result_before_connect_raises(notifier: RecordingNotifier) -> None:
+    broker = OlympTradeBroker(
+        access_token="fake",
+        account_id="12345",
+        account_group="demo",
+        notifier=notifier,
+    )
+    with pytest.raises(BrokerAuthError, match="before connect"):
+        await broker.wait_result("12345", timeout=2.0)

@@ -294,12 +294,12 @@ class OlympTradeBroker:
 
         async with self._pending_lock:
             future = self._pending.pop(broker_trade_id, None)
+            payload: dict[str, object] = {"result": stage_result, "pnl": pnl_decimal}
+            # Always cache so late wait_result can find it (handles the
+            # race where e:26 arrives before wait_result's first check).
+            self._results[broker_trade_id] = payload
             if future is not None and not future.done():
-                future.set_result({"result": stage_result, "pnl": pnl_decimal})
-                return
-            # Future is None (wait_result hasn't been called yet — race) OR
-            # future is done (duplicate e:26). Cache for late wait_result.
-            self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
+                future.set_result(payload)
         _log.info(
             "e:26 cached for late wait_result: trade_id=%s status=%s",
             broker_trade_id,
@@ -399,3 +399,55 @@ class OlympTradeBroker:
             broker_trade_id,
         )
         return broker_trade_id
+
+    async def wait_result(
+        self,
+        trade_id: str,
+        *,
+        timeout: float,
+    ) -> StageResult:
+        """Block until the broker reports a terminal result for `trade_id`.
+
+        Returns 'win' | 'loss' | 'timeout' | 'error'. Distinguishes:
+          - 'timeout' (broker connected, no e:26 within timeout)
+          - ConnectionError (broker disconnected — DM-notifies, propagates)
+          - 'error' (unknown trade_id, defensive)
+        """
+        if not self._connected:
+            raise BrokerAuthError("wait_result() called before connect()")
+
+        # 1. Check _results first (handles the race where e:26 arrived
+        # before wait_result was called).
+        async with self._pending_lock:
+            if trade_id in self._results:
+                payload = self._results.pop(trade_id)
+                result_str = payload.get("result")
+                return _map_status(result_str if isinstance(result_str, str) else None)
+            future = self._pending.get(trade_id)
+        if future is None:
+            _log.warning("wait_result: no pending future for trade_id=%s", trade_id)
+            return "error"
+
+        # 2. Await the future with the configured timeout
+        try:
+            payload = await asyncio.wait_for(future, timeout=timeout)
+        except TimeoutError:
+            client = self._client
+            if client is not None and not client.connection.is_connected:
+                await self._notifier.on_olymp_disconnect()
+                _log.warning(
+                    "wait_result: broker disconnected before reporting trade_id=%s",
+                    trade_id,
+                )
+                raise ConnectionError("olymp_disconnected") from None
+            _log.warning("wait_result timeout: trade_id=%s timeout=%.1fs", trade_id, timeout)
+            return "timeout"
+        except asyncio.CancelledError:
+            await self._notifier.on_olymp_disconnect()
+            raise ConnectionError("olymp_disconnected") from None
+
+        # 3. Clean up and map to StageResult
+        async with self._pending_lock:
+            self._pending.pop(trade_id, None)
+        status = payload.get("result")
+        return _map_status(status if isinstance(status, str) else None)
