@@ -293,7 +293,7 @@ class OlympTradeBroker:
         pnl_decimal = Decimal(str(pnl)) if pnl is not None else Decimal("0.00")
 
         async with self._pending_lock:
-            future = self._pending.get(broker_trade_id)
+            future = self._pending.pop(broker_trade_id, None)
             if future is not None and not future.done():
                 future.set_result({"result": stage_result, "pnl": pnl_decimal})
                 return

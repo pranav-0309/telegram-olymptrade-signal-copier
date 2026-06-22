@@ -427,6 +427,7 @@ async def test_on_trade_closed_resolves_pending_future(
 
     sig = make_signal()
     trade_id = await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+    future = broker._pending[trade_id]  # capture BEFORE delivery
 
     # Deliver e:26 BEFORE wait_result — covers the race
     await fake_client._deliver_event(
@@ -434,7 +435,6 @@ async def test_on_trade_closed_resolves_pending_future(
         {"d": [{"id": int(trade_id), "status": "win", "balance_change": 1.84}]},
     )
 
-    future = broker._pending[trade_id]
     assert future.done()
     result = future.result()
     assert result["result"] == "win"
