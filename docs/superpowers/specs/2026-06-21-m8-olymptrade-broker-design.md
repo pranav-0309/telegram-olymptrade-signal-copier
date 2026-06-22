@@ -444,13 +444,16 @@ async def _on_trade_closed(self, message: dict) -> None:
 
     async with self._pending_lock:
         future = self._pending.pop(broker_trade_id, None)
+        # Always cache to _results (M8 fix — was an early-return in the
+        # original spec draft, but that prevented `wait_result` from
+        # finding the result when e:26 arrives between `place()` and
+        # `wait_result()` and a future existed at delivery time). With
+        # this fix, all three branches — future present / future None
+        # (race) / future done (duplicate) — populate `_results` so the
+        # cache check in `wait_result` always finds the payload.
+        self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
         if future is not None and not future.done():
             future.set_result({"result": stage_result, "pnl": pnl_decimal})
-            return
-        # Future is None (wait_result hasn't been called yet — race) OR
-        # future is done (duplicate e:26). Cache so wait_result's first
-        # check can find it on its next call.
-        self._results[broker_trade_id] = {"result": stage_result, "pnl": pnl_decimal}
     _log.info(
         "e:26 cached for late wait_result: trade_id=%s status=%s",
         broker_trade_id, status,
