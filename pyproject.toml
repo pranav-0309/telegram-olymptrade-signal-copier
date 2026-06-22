@@ -87,8 +87,8 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --ignore=OlympTradeAPI"
+addopts = "-ra --strict-markers --ignore=OlympTradeAPI -m 'not slow'"
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "slow: marks tests as slow (run explicitly with 'pytest -m slow')",
 ]
 
