@@ -16,17 +16,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from olymptrade_ws import OlympTradeClient
-from signal_copier.broker.base import BrokerAuthError  # noqa: F401  (used in Task 5)
+from signal_copier.broker.base import BrokerAuthError
 from signal_copier.broker.olymp import OlympTradeBroker
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal
-from signal_copier.infra.clock import monotonic  # noqa: F401  (used in Task 5)
+from signal_copier.infra.clock import monotonic
 from signal_copier.notify.protocol import Notifier
 
 if TYPE_CHECKING:
@@ -178,18 +178,96 @@ class ReconnectingOlympTradeBroker:
         is DISCONNECTED (exhaustion).
         """
         if self._state == _ConnectionState.RECONNECTING:
-            # Already running; wait for it to finish.
-            # We need to acquire-and-release the lock so we serialize on the
-            # running loop's completion. But the lock is HELD by that loop.
-            # Wait for the lock to be released (which happens when the loop
-            # finishes).
+            # Another coroutine is already reconnecting; serialize on its completion.
             async with self._reconnect_lock:
                 pass
             return
+        # Set state BEFORE acquiring the lock so concurrent callers see RECONNECTING
+        # and take the fast path above (closes the race window).
+        self._state = _ConnectionState.RECONNECTING
         async with self._reconnect_lock:
             await self._reconnect_loop()
 
+    async def _safe_notify(self, coro: Awaitable[object]) -> None:
+        """Await a notifier call; absorb exceptions so they don't break the loop."""
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001 — defensive isolation
+            _log.warning("notifier raised, continuing: exc=%s", exc)
+
     async def _reconnect_loop(self) -> None:
-        """Tear down dead inner; up to reconnect_max_attempts fresh connects."""
-        # ... placeholder; implemented in Task 5
-        raise NotImplementedError
+        """Tear down dead inner; up to reconnect_max_attempts fresh connects.
+
+        Sets self._state = RECONNECTING at entry; back to CONNECTED on success
+        or DISCONNECTED on exhaustion. Notifies user at each lifecycle event.
+        CancelledError (e.g. from close() during backoff) propagates; the
+        caller is responsible for resetting state to DISCONNECTED.
+        """
+        self._state = _ConnectionState.RECONNECTING
+        disconnect_detected_at = monotonic()
+        await self._safe_notify(self._notifier.on_olymp_disconnect())
+
+        if self._inner is not None:
+            try:
+                await self._inner.close()
+            except Exception as exc:  # noqa: BLE001 — close is best-effort
+                _log.warning("inner.close raised during reconnect: exc=%s", exc)
+
+        last_exc: Exception | None = None
+        for attempt in range(1, self._reconnect_max_attempts + 1):
+            delay = compute_backoff_seconds(attempt - 1)
+            downtime = monotonic() - disconnect_detected_at
+            await self._safe_notify(
+                self._notifier.on_olymp_reconnecting(
+                    attempt=attempt,
+                    max_attempts=self._reconnect_max_attempts,
+                    downtime_seconds=downtime,
+                    next_delay_seconds=delay,
+                )
+            )
+            await asyncio.sleep(delay)
+            try:
+                new_inner = self._build_inner()
+                await new_inner.connect()
+            except Exception as exc:  # noqa: BLE001 — connection failure
+                self._consecutive_failures += 1
+                last_exc = exc
+                _log.warning(
+                    "reconnect attempt %d/%d failed: exc=%s",
+                    attempt,
+                    self._reconnect_max_attempts,
+                    exc,
+                )
+                continue
+
+            # Success: swap, notify, return.
+            self._inner = new_inner
+            self._consecutive_failures = 0
+            self._state = _ConnectionState.CONNECTED
+            total_downtime = monotonic() - disconnect_detected_at
+            await self._safe_notify(
+                self._notifier.on_olymp_reconnected(
+                    attempts_used=attempt,
+                    total_downtime_seconds=total_downtime,
+                )
+            )
+            _log.info(
+                "OlympTrade reconnected on attempt %d/%d after %.1fs",
+                attempt,
+                self._reconnect_max_attempts,
+                total_downtime,
+            )
+            return
+
+        # Exhausted.
+        self._state = _ConnectionState.DISCONNECTED
+        total_downtime = monotonic() - disconnect_detected_at
+        await self._safe_notify(
+            self._notifier.on_olymp_reconnect_failed(
+                attempts=self._reconnect_max_attempts,
+                total_downtime_seconds=total_downtime,
+            )
+        )
+        raise BrokerAuthError(
+            f"OlympTrade reconnect exhausted after {self._reconnect_max_attempts} attempts"
+        ) from last_exc
