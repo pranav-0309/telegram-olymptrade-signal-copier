@@ -227,6 +227,7 @@ async def test_noop_notifier_logs_olymp_reconnected_at_warning(
     msg = caplog.records[0].getMessage()
     assert "event=olymp_reconnected" in msg
     assert "attempts_used=1" in msg
+    assert "total_downtime=12.3s" in msg
 
 
 @pytest.mark.asyncio
@@ -243,3 +244,5 @@ async def test_noop_notifier_logs_olymp_reconnect_failed_at_error(
     assert caplog.records[0].levelno == logging.ERROR
     msg = caplog.records[0].getMessage()
     assert "event=olymp_reconnect_failed" in msg
+    assert "attempts=5" in msg
+    assert "total_downtime=67.8s" in msg
