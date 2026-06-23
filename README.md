@@ -41,6 +41,62 @@ This project uses a reverse-engineered WebSocket client for the broker (original
 
 See [`src/olymptrade_ws/VENDORED.md`](src/olymptrade_ws/VENDORED.md) for the upstream source, license, import contract, and re-vendoring instructions.
 
+## First-time setup (deploy to Railway)
+
+> Time required: ~20 minutes. You need a Railway account, this repo, your Telegram API credentials, and your OlympTrade JWT.
+
+1. **Create a Railway project** at <https://railway.app> → New Project → Deploy from GitHub repo (select this repo). Railway auto-detects the Dockerfile and begins a first build. The first deploy will fail with "Telegram not authorized" — this is expected. Continue to step 2.
+
+2. **Add Postgres** in the Railway project dashboard → **+ New** → **Database** → **PostgreSQL**. Railway auto-injects `DATABASE_URL` into your `signal-copier` service. No manual wiring needed.
+
+3. **Set environment variables** on the `signal-copier` service → Variables tab. Required:
+   - `TELEGRAM_API_ID` (from <https://my.telegram.org>)
+   - `TELEGRAM_API_HASH`
+   - `TELEGRAM_PHONE` (e.g. `+12345678900`)
+   - `OLYMP_ACCESS_TOKEN` (extract from your OlympTrade session — DevTools → Network → any authenticated request → JWT in the Authorization header)
+   - `OLYMP_ACCOUNT_ID` (numeric, visible in OlympTrade dashboard URL)
+   - Optional but recommended: `OLYMP_ACCOUNT_GROUP=demo`, `DRY_RUN=true` (defaults to safe paper-trading; app refuses to start if both are off)
+   - `DATABASE_URL` is **auto-injected** by the Postgres service. Don't set it manually.
+
+4. **Trigger a redeploy.** Railway's dashboard shows the first deploy failed. Click "Restart" to re-run the now-configured container. The bot will start, run migrations on the Postgres (idempotent `CREATE TABLE IF NOT EXISTS`), then fail with "Telegram session string missing". Expected — proceed to step 5.
+
+5. **Generate the Telegram session string locally** (one-time):
+
+   ```bash
+   git clone <this-repo> ~/signal-copier-auth   # or use your existing clone
+   cd ~/signal-copier-auth
+   uv sync
+   cp .env.example .env
+   # Edit .env: set TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE.
+   # Leave TELEGRAM_SESSION_STRING empty.
+   uv run python -m signal_copier.telegram.auth
+   ```
+
+   The helper prompts for code from your Telegram app and 2FA password (if enabled). On success, it prints:
+
+   ```
+   ======================================================================
+   Authenticated as: Your Name (@yourhandle)
+   User ID: 123456789
+   ======================================================================
+   Set this as TELEGRAM_SESSION_STRING in your Railway Variables:
+
+   TELEGRAM_SESSION_STRING=<a long base64 string>
+   ```
+
+   **Treat the session string like a password.** Anyone with it can read and send messages from your Telegram account.
+
+6. **Paste the session string into Railway** → Variables → `TELEGRAM_SESSION_STRING`. Click "Restart" on the service.
+
+7. **Verify** by checking Railway logs (`railway logs --tail` or the dashboard's Logs tab). You should see:
+   - `Bot started`
+   - A Telegram self-DM with the asset map resolved by `OlympTradeBroker`
+   - Empty cascade tables in the Postgres service's Data tab (or three empty tables: `signals`, `stages`, `daily_summary`)
+
+8. **Send a test signal** to your analyst channel in the format specified by the PRD §4.2. Verify the bot DMs you "Signal received" within ~1 second and, at the trigger HH:MM, "Trade placed (INITIAL)".
+
+Done. The tool runs unattended; Railway restarts on crash (PRD §17.3); PG state survives redeploys.
+
 ## ⚠️ Risks
 
 - **Telegram ToS:** uses a personal user account, not a bot. Ban risk is real and accepted by the owner.
