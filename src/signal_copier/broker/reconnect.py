@@ -126,7 +126,18 @@ class ReconnectingOlympTradeBroker:
         self._watcher = asyncio.create_task(self._watcher_loop(), name="olymp-watcher")
 
     async def place(self, signal: Signal, *, stage: Stage, amount: Decimal) -> str:
-        """Delegate to inner; on ConnectionError trigger reconnect and re-raise."""
+        """Delegate to inner; on ConnectionError trigger reconnect and re-raise.
+
+        If the wrapper is currently reconnecting (state=RECONNECTING), the
+        inner has been closed by the watcher's reconnect loop — surface as
+        ConnectionError without re-entering the inner, so the caller (M6
+        handler) maps it to error_reason='broker_unavailable'.
+        """
+        if self._state == _ConnectionState.RECONNECTING:
+            await self._trigger_reconnect()
+            raise ConnectionError("broker reconnecting")
+        if self._state == _ConnectionState.DISCONNECTED:
+            raise ConnectionError("broker disconnected")
         assert self._inner is not None
         try:
             return await self._inner.place(signal, stage=stage, amount=amount)
@@ -135,7 +146,17 @@ class ReconnectingOlympTradeBroker:
             raise
 
     async def wait_result(self, trade_id: str, *, timeout: float) -> StageResult:
-        """Delegate to inner; on ConnectionError trigger reconnect and re-raise."""
+        """Delegate to inner; on ConnectionError trigger reconnect and re-raise.
+
+        If the wrapper is currently reconnecting (state=RECONNECTING), the
+        inner has been closed by the watcher's reconnect loop — surface as
+        ConnectionError without re-entering the inner.
+        """
+        if self._state == _ConnectionState.RECONNECTING:
+            await self._trigger_reconnect()
+            raise ConnectionError("broker reconnecting")
+        if self._state == _ConnectionState.DISCONNECTED:
+            raise ConnectionError("broker disconnected")
         assert self._inner is not None
         try:
             return await self._inner.wait_result(trade_id, timeout=timeout)
