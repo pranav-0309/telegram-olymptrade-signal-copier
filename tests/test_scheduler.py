@@ -835,3 +835,92 @@ async def test_daily_drawdown_falls_back_to_usd_when_balance_none() -> None:
 
     limit = await supervisor._check_daily_limit()
     assert limit == "drawdown"
+
+
+# --- M9 recovery (Tasks 5 + 6) --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_record_timeout_dispatches_result_event_and_persists() -> None:
+    """Scheduler.record_timeout() loads the signal, dispatches a ResultEvent('timeout'),
+    and persists the new state via StateStore.update_signal_state()."""
+    from signal_copier.infra.db_rows import SignalRow
+    from signal_copier.notify.protocol import NoOpNotifier
+    from tests._scheduler_fixtures import FakeBroker, FakeStateStore
+
+    state_store = FakeStateStore()
+    signal_row = SignalRow(
+        signal_id="sig-rt-1",
+        pair="EUR/JPY",
+        broker_pair="EURJPY",
+        broker_category="forex",
+        direction="down",
+        trigger_hhmm="10:20",
+        trigger_ts_unix=1_700_000_000.0,
+        expiration_seconds=300,
+        received_at_unix=1_700_000_000.0 - 60,
+        source_message_id=1,
+        source_chat_id=-100,
+        raw_text="EUR/JPY;10:20;PUT🟥",
+        status="placed_initial",
+        error_reason=None,
+        created_at_unix=1_700_000_000.0 - 60,
+        updated_at_unix=1_700_000_000.0,
+    )
+    state_store.signals = {signal_row.signal_id: signal_row}
+
+    config = Config(
+        dry_run=True,
+        amount_initial=Decimal("2.00"),
+        amount_gale1=Decimal("4.00"),
+        amount_gale2=Decimal("8.00"),
+        expiration_seconds=300,
+        trigger_skew_tolerance_seconds=2.0,
+        timezone="America/Sao_Paulo",
+    )
+    broker = FakeBroker()
+    scheduler = Scheduler(
+        queue=asyncio.Queue(),
+        broker=broker,
+        state_store=state_store,  # type: ignore[arg-type]
+        notifier=NoOpNotifier(),
+        config=config,
+    )
+
+    await scheduler.record_timeout("sig-rt-1", "initial")  # type: ignore[arg-type]
+
+    assert len(state_store.state_updates) == 1
+    update = state_store.state_updates[0]
+    assert update["signal_id"] == "sig-rt-1"
+    assert update["new_state"] != "placed_initial"
+    assert update["error_reason"] in {"signal_expired", "broker_unavailable", None}
+
+
+@pytest.mark.asyncio
+async def test_record_timeout_is_idempotent_on_unknown_signal() -> None:
+    from signal_copier.notify.protocol import NoOpNotifier
+    from tests._scheduler_fixtures import FakeBroker, FakeStateStore
+
+    state_store = FakeStateStore()
+    state_store.signals = {}
+
+    config = Config(
+        dry_run=True,
+        amount_initial=Decimal("2.00"),
+        amount_gale1=Decimal("4.00"),
+        amount_gale2=Decimal("8.00"),
+        expiration_seconds=300,
+        trigger_skew_tolerance_seconds=2.0,
+        timezone="America/Sao_Paulo",
+    )
+    broker = FakeBroker()
+    scheduler = Scheduler(
+        queue=asyncio.Queue(),
+        broker=broker,
+        state_store=state_store,  # type: ignore[arg-type]
+        notifier=NoOpNotifier(),
+        config=config,
+    )
+
+    await scheduler.record_timeout("nonexistent", "initial")
+    assert state_store.state_updates == []

@@ -25,15 +25,15 @@ from typing import TYPE_CHECKING, cast
 
 from signal_copier.broker.base import UnsupportedPairError
 from signal_copier.config import Config
-from signal_copier.domain.gale import Stage, amount_for_stage  # noqa: F401  (Stage used later)
+from signal_copier.domain.gale import Stage, amount_for_stage
 from signal_copier.domain.signal import Signal
 from signal_copier.domain.state import (
     FireEvent,  # noqa: F401  (used in Task 9+)
-    ResultEvent,  # noqa: F401  (used in Task 9+)
+    ResultEvent,
     SignalState,
     StageResult,  # noqa: F401  (used in Task 9+)
     TerminalState,  # noqa: F401  (used in Task 9+)
-    transition,  # noqa: F401  (used in Task 9+)
+    transition,
 )
 from signal_copier.infra.clock import monotonic, now_unix
 from signal_copier.notify.protocol import Notifier
@@ -102,6 +102,68 @@ class Scheduler:
         __main__ for the FR-7.1 'open_cascades' field on bot shutdown.
         """
         return len(self._active_tasks)
+
+    async def record_timeout(self, signal_id: str, stage: Stage) -> None:
+        """Record a per-stage timeout for a signal that's stuck mid-cascade.
+
+        Used by M9's recovery module when a stage's expiration+grace window
+        has CLOSED while the process was down. The state machine dispatches
+        a ResultEvent(result='timeout') which is treated as a loss per
+        FR-5.3, then advances the cascade per FR-5.5-5.7.
+
+        Idempotent: a no-op (with a warning log) if signal_id does not
+        exist in the state store.
+        """
+        signal_row = await self._state_store.get_signal(signal_id)
+        if signal_row is None:
+            _log.warning(
+                "record_timeout: no signal found: signal_id=%s stage=%s (idempotent no-op)",
+                signal_id,
+                stage,
+            )
+            return
+
+        # Reconstruct the SignalState for the stage that's timing out.
+        # The SignalRow only stores trigger_ts_unix (the initial). Gale
+        # trigger times are derived arithmetically from stage_offset.
+        stage_offset = {"initial": 0, "gale1": 1, "gale2": 2}[stage]
+        trigger_unix = signal_row.trigger_ts_unix + stage_offset * signal_row.expiration_seconds
+
+        state = SignalState(
+            signal_id=signal_row.signal_id,
+            pair=signal_row.pair,
+            direction=signal_row.direction,
+            state=signal_row.status,
+            stage=stage,
+            amount=amount_for_stage(stage, self._config),
+            trigger_unix=trigger_unix,
+            expires_at_unix=trigger_unix + float(signal_row.expiration_seconds),
+            result=None,
+            cumulative_pnl=Decimal("0.00"),
+            error_reason=signal_row.error_reason,
+        )
+
+        now_wall = now_unix()
+        result = transition(
+            state,
+            ResultEvent(result="timeout", now_unix=now_wall),
+            config=self._config,
+        )
+        if not result.success or result.new_state is None:
+            _log.error(
+                "record_timeout: transition failed: signal_id=%s reason=%s",
+                signal_id,
+                result.reason,
+            )
+            return
+
+        new_state = result.new_state
+        await self._state_store.update_signal_state(
+            signal_id=signal_id,
+            new_state=new_state.state,
+            error_reason=new_state.error_reason,
+            updated_at_unix=now_wall,
+        )
 
     async def run(self) -> None:
         """Drain the queue; spawn a SignalSupervisor per signal. Runs forever.
