@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: signal-copier-pg
+    environment:
+      POSTGRES_USER: copier
+      POSTGRES_PASSWORD: copier
+      POSTGRES_DB: copier
+    ports:
+      - "5432:5432"
+    volumes:
+      - copier-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copier -d copier"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  copier-pg-data:
