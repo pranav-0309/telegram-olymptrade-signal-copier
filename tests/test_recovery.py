@@ -195,3 +195,70 @@ async def test_recover_expired_gale2_window() -> None:
 
     assert report.timed_out == 1
     assert scheduler.timed_out == [("sig-g2", "gale2")]
+
+
+@pytest.mark.asyncio
+async def test_recover_idempotent_no_active_signals_returns_zero() -> None:
+    """Calling recovery twice with no active signals → both reports zero, no scheduler calls.
+
+    Proves the no-op short-circuit (line 54) is safe to re-run on every boot.
+    """
+    store = FakeStateStore()
+    store.signals = {}
+    scheduler = RecordingScheduler()
+
+    report1 = await recover_active_signals(
+        state_store=store,  # type: ignore[arg-type]
+        broker=object(),
+        scheduler=scheduler,  # type: ignore[arg-type]
+        now_unix=1.0,
+    )
+    report2 = await recover_active_signals(
+        state_store=store,  # type: ignore[arg-type]
+        broker=object(),
+        scheduler=scheduler,  # type: ignore[arg-type]
+        now_unix=2.0,
+    )
+
+    assert report1.rehydrated == report2.rehydrated == 0
+    assert report1.timed_out == report2.timed_out == 0
+    assert scheduler.adopted == []
+    assert scheduler.timed_out == []
+
+
+@pytest.mark.asyncio
+async def test_recover_mixed_signals_calls_correct_handlers_per_signal() -> None:
+    """Mixed active signals: stale routes to record_timeout, fresh routes to adopt.
+
+    sig-fresh (placed_initial, trigger=1_700_000_000) at now=+400s: window
+    ended at +330s → timed_out. sig-stale (placed_gale1, same trigger) at +400s:
+    gale1 stage_fire = +300s, window ends at +630s → still within window → adopt.
+    """
+    store = FakeStateStore()
+    store.signals = {
+        "sig-fresh": _make_signal_row(
+            signal_id="sig-fresh",
+            status="placed_initial",
+            trigger_ts_unix=1_700_000_000.0,
+        ),
+        "sig-stale": _make_signal_row(
+            signal_id="sig-stale",
+            status="placed_gale1",
+            trigger_ts_unix=1_700_000_000.0,
+        ),
+    }
+
+    scheduler2 = RecordingScheduler()
+    now_late = 1_700_000_400.0
+
+    report2 = await recover_active_signals(
+        state_store=store,  # type: ignore[arg-type]
+        broker=object(),
+        scheduler=scheduler2,  # type: ignore[arg-type]
+        now_unix=now_late,
+    )
+
+    assert report2.rehydrated == 1
+    assert report2.timed_out == 1
+    assert ("sig-fresh", "initial") in scheduler2.timed_out
+    assert ("sig-stale", "placed_gale1") in [a for a in scheduler2.adopted]
