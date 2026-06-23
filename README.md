@@ -97,6 +97,50 @@ See [`src/olymptrade_ws/VENDORED.md`](src/olymptrade_ws/VENDORED.md) for the ups
 
 Done. The tool runs unattended; Railway restarts on crash (PRD §17.3); PG state survives redeploys.
 
+## Local development
+
+Prereqs: Python 3.13, Docker, uv (`pip install uv` or `brew install uv`).
+
+```bash
+git clone <this-repo>
+cd signal-copier
+uv sync                       # creates .venv, installs deps
+cp .env.example .env          # then edit: TELEGRAM_*, OLYMP_*
+docker compose up -d          # starts postgres on :5432
+echo 'DATABASE_URL=postgresql://copier:copier@localhost:5432/copier' >> .env
+uv run python -m signal_copier
+```
+
+To stop Postgres (data persists in the `copier-pg-data` volume):
+
+```bash
+docker compose down
+```
+
+To wipe and recreate from scratch:
+
+```bash
+docker compose down -v && docker compose up -d
+```
+
+### Running tests
+
+```bash
+uv run pytest                    # full suite
+uv run pytest tests/test_parser.py  # one file
+uv run pytest -k "test_state"    # one test pattern
+```
+
+Tests that hit the DB (`tests/test_db.py`) need Postgres running via `docker compose up -d`. The test suite uses `DATABASE_URL` from `.env`.
+
+### Linting and typechecking
+
+```bash
+uv run ruff check                # lint
+uv run ruff format --check       # format check (CI fails if unformatted)
+uv run mypy --strict src tests   # type check (CI fails on any error)
+```
+
 ## ⚠️ Risks
 
 - **Telegram ToS:** uses a personal user account, not a bot. Ban risk is real and accepted by the owner.
