@@ -1,0 +1,41 @@
+[
+  {
+    "id": "smoke_001",
+    "signal_id": "smoke_001",
+    "inject_at_offset_seconds": 5,
+    "raw_text": "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n🕛TIME UNTIL 10:25\n1st GALE -> TIME UNTIL 10:25\n2nd GALE - TIME UNTIL 10:25",
+    "expected_outcome": "win_at_initial",
+    "notes": "smoke: first signal, win@initial"
+  },
+  {
+    "id": "smoke_002",
+    "signal_id": "smoke_002",
+    "inject_at_offset_seconds": 30,
+    "raw_text": "💰5-minute expiration\nGBP/USD;11:00;CALL🟩\n🕛TIME UNTIL 11:05\n1st GALE -> TIME UNTIL 11:05\n2nd GALE - TIME UNTIL 11:05",
+    "expected_outcome": "loss_initial_win_gale1",
+    "notes": "smoke: gale1 path"
+  },
+  {
+    "id": "smoke_003",
+    "signal_id": "smoke_003",
+    "inject_at_offset_seconds": 60,
+    "raw_text": "💰5-minute expiration\nUSD/CAD;12:00;PUT🟥\n🕛TIME UNTIL 12:05\n1st GALE -> TIME UNTIL 12:05\n2nd GALE - TIME UNTIL 12:05",
+    "expected_outcome": "full_loss",
+    "notes": "smoke: full loss path"
+  },
+  {
+    "id": "smoke_004_parse_fail",
+    "inject_at_offset_seconds": 90,
+    "raw_text": "💰5-minute expiration\nEUR/JPY;10:20;WRONG_EMOJI\n🕛TIME UNTIL 10:25\n1st GALE -> TIME UNTIL 10:25\n2nd GALE - TIME UNTIL 10:25",
+    "expected_outcome": "parse_failure",
+    "notes": "smoke: malformed message"
+  },
+  {
+    "id": "smoke_005",
+    "signal_id": "smoke_005",
+    "inject_at_offset_seconds": 120,
+    "raw_text": "💰5-minute expiration\nAUD/USD;13:00;PUT🟥\n🕛TIME UNTIL 13:05\n1st GALE -> TIME UNTIL 13:05\n2nd GALE - TIME UNTIL 13:05",
+    "expected_outcome": "win_at_initial",
+    "notes": "smoke: second win@initial"
+  }
+]
