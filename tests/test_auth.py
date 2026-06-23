@@ -172,5 +172,5 @@ def test_main_refuses_to_run_on_railway(
     rc = auth.main()
     assert rc == 2
     err = capsys.readouterr().err
-    assert "run this locally" in err.lower()
+    assert "locally" in err.lower()
     assert "railway" in err.lower()

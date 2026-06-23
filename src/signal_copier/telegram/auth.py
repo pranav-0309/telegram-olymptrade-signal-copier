@@ -11,6 +11,19 @@ from telethon.sessions import StringSession
 from signal_copier.config import Config
 from signal_copier.telegram.client import TelegramConfigError
 
+
+def _is_running_on_railway() -> bool:
+    """Return True if this process is running on Railway.app.
+
+    Detected by the presence of either RAILWAY_ENVIRONMENT or
+    RAILWAY_PROJECT_ID env vars, which Railway always injects into
+    its containers.
+    """
+    import os
+
+    return bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+
+
 # Interactive auth has no bound — the user may take minutes to enter
 # the SMS code. We use a generous default.
 _AUTH_TIMEOUT_SECONDS: int = 300
@@ -61,6 +74,14 @@ def main() -> int:
         sys.stderr.write(
             "❌ TELEGRAM_API_ID / TELEGRAM_API_HASH / TELEGRAM_PHONE must be set in .env\n"
             "   Get API_ID and API_HASH from https://my.telegram.org\n"
+        )
+        return 2
+
+    if _is_running_on_railway():
+        sys.stderr.write(
+            "❌ Do not run this on Railway. Run `python -m signal_copier.telegram.auth` "
+            "locally and paste the printed TELEGRAM_SESSION_STRING into your Railway "
+            "Variables.\n"
         )
         return 2
 
