@@ -148,3 +148,32 @@ def make_balance_message(
 ) -> dict[str, Any]:
     """Build a fake e:55 balance push for our account_group."""
     return {"d": [{"group": account_group, "balance": balance}]}
+
+
+class FakeClientFactory:
+    """Returns FakeOlympTradeClient instances one-at-a-time from a list.
+
+    Each call to `factory()` pops the next fake from the list. After the list
+    is exhausted, returns the LAST fake (so a test can declare "first reconnect
+    uses fake[1]; subsequent reuses the recovered fake[1]"). Tests that want
+    every reconnect to use a fresh fake pass a list long enough to cover the
+    attempt count.
+
+    Matches the contract of OlympTradeBroker._client_factory
+    (Callable[[], OlympTradeClient], see broker/olymp.py:106).
+    """
+
+    def __init__(self, fakes: list[FakeOlympTradeClient]) -> None:
+        if not fakes:
+            raise ValueError("FakeClientFactory requires at least one fake")
+        self._fakes = list(fakes)
+        self._index = 0
+        self.call_count = 0
+
+    def __call__(self) -> FakeOlympTradeClient:
+        self.call_count += 1
+        if self._index >= len(self._fakes):
+            return self._fakes[-1]
+        fake = self._fakes[self._index]
+        self._index += 1
+        return fake
