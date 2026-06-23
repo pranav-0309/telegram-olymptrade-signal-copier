@@ -121,11 +121,42 @@ def assert_no_missed_triggers(
 
 
 def assert_no_duplicate_trades(stages: list[dict[str, Any]]) -> InvariantResult:
-    return InvariantResult("no_duplicate_trades", True, "stub")
+    """Invariant 4: no two stages with the same (signal_id, stage)."""
+    seen: set[tuple[str, str]] = set()
+    dupes: list[str] = []
+    for s in stages:
+        key = (str(s["signal_id"]), str(s["stage"]))
+        if key in seen:
+            dupes.append(f"{key[0]}/{key[1]}")
+        seen.add(key)
+    if dupes:
+        return InvariantResult(
+            "no_duplicate_trades", False, f"duplicate stages: {', '.join(dupes[:5])}"
+        )
+    return InvariantResult(
+        "no_duplicate_trades", True, f"{len(seen)} unique (signal_id, stage) pairs"
+    )
 
 
 def assert_no_dm_failures(app_log: Path) -> InvariantResult:
-    return InvariantResult("no_dm_failures", True, "stub")
+    """Invariant 5: no 'DM send failed' lines in app_log."""
+    if not app_log.exists():
+        return InvariantResult("no_dm_failures", False, f"app_log does not exist: {app_log}")
+    text = app_log.read_text(encoding="utf-8", errors="replace")
+    if "DM send failed" in text:
+        return InvariantResult("no_dm_failures", False, "app_log contains 'DM send failed' lines")
+    return InvariantResult("no_dm_failures", True, "no DM send failures in app_log")
+
+
+_EXPECTED_OUTCOME_STAGES: dict[str, int] = {
+    "win_at_initial": 1,
+    "loss_initial_win_gale1": 2,
+    "loss_initial_loss_gale1_win_gale2": 3,
+    "full_loss": 3,
+    "signal_expired": 0,
+    "unsupported_pair": 0,
+    "parse_failure": 0,
+}
 
 
 def assert_row_counts_match_expected(
@@ -133,7 +164,16 @@ def assert_row_counts_match_expected(
     stages: list[dict[str, Any]],
     fixture: list[dict[str, Any]],
 ) -> InvariantResult:
-    return InvariantResult("row_counts", True, "stub")
+    """Invariant 6: stages row count matches sum of expected_outcome per fixture."""
+    expected_total = sum(
+        _EXPECTED_OUTCOME_STAGES.get(f.get("expected_outcome", ""), 0) for f in fixture
+    )
+    actual = len(stages)
+    if actual != expected_total:
+        return InvariantResult(
+            "row_counts", False, f"expected {expected_total} stage rows, got {actual}"
+        )
+    return InvariantResult("row_counts", True, f"{actual} stage rows match fixture expectations")
 
 
 def assert_restart_drill(drill: RestartDrillResult) -> InvariantResult:

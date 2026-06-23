@@ -157,3 +157,80 @@ def test_invariant_3_no_missed_triggers_fails_when_skew_exceeds_tolerance() -> N
 
     r = assert_no_missed_triggers(stages, tolerance_seconds=2.0)
     assert not r.passed
+
+
+def test_invariant_4_no_duplicate_trades_passes_when_unique() -> None:
+    stages = [
+        {"signal_id": "s1", "stage": "initial"},
+        {"signal_id": "s1", "stage": "gale1"},
+        {"signal_id": "s2", "stage": "initial"},
+    ]
+    from tools.soak_assertions import assert_no_duplicate_trades
+
+    r = assert_no_duplicate_trades(stages)
+    assert r.passed
+
+
+def test_invariant_4_no_duplicate_trades_fails_when_duplicate() -> None:
+    stages = [
+        {"signal_id": "s1", "stage": "initial"},
+        {"signal_id": "s1", "stage": "initial"},
+    ]
+    from tools.soak_assertions import assert_no_duplicate_trades
+
+    r = assert_no_duplicate_trades(stages)
+    assert not r.passed
+    assert "s1" in r.detail
+
+
+def test_invariant_5_no_dm_failures_passes_when_clean(tmp_path: Path) -> None:
+    log = tmp_path / "app.log"
+    log.write_text("[2026-06-22 10:00:00] notify: event=bot_started\n")
+    from tools.soak_assertions import assert_no_dm_failures
+
+    r = assert_no_dm_failures(log)
+    assert r.passed
+
+
+def test_invariant_5_no_dm_failures_fails_when_present(tmp_path: Path) -> None:
+    log = tmp_path / "app.log"
+    log.write_text(
+        "[2026-06-22 10:00:00] notify: event=bot_started\n"
+        "[2026-06-22 10:05:00] DM send failed: rate limit\n"
+    )
+    from tools.soak_assertions import assert_no_dm_failures
+
+    r = assert_no_dm_failures(log)
+    assert not r.passed
+    assert "DM send failed" in r.detail
+
+
+def test_invariant_6_row_counts_match_expected_when_correct() -> None:
+    signals = [
+        {"signal_id": "s1", "status": "done_win"},
+        {"signal_id": "s2", "status": "done_loss"},
+    ]
+    stages = [
+        {"signal_id": "s1", "stage": "initial", "result": "win"},
+        {"signal_id": "s2", "stage": "initial", "result": "loss"},
+        {"signal_id": "s2", "stage": "gale1", "result": "loss"},
+        {"signal_id": "s2", "stage": "gale2", "result": "loss"},
+    ]
+    fixture = [
+        {"id": "f1", "expected_outcome": "win_at_initial"},
+        {"id": "f2", "expected_outcome": "full_loss"},
+    ]
+    from tools.soak_assertions import assert_row_counts_match_expected
+
+    r = assert_row_counts_match_expected(signals, stages, fixture)
+    assert r.passed
+
+
+def test_invariant_6_row_counts_match_expected_fails_when_mismatch() -> None:
+    signals = [{"signal_id": "s1", "status": "done_win"}]
+    stages = [{"signal_id": "s1", "stage": "initial", "result": "win"}]
+    fixture = [{"id": "f1", "expected_outcome": "full_loss"}]
+    from tools.soak_assertions import assert_row_counts_match_expected
+
+    r = assert_row_counts_match_expected(signals, stages, fixture)
+    assert not r.passed
