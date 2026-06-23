@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from signal_copier.broker.base import Broker
+    from signal_copier.domain.gale import Stage
     from signal_copier.infra.db_rows import SignalRow
     from signal_copier.infra.state_store import StateStore
     from signal_copier.scheduler.trigger import Scheduler
@@ -81,13 +82,13 @@ async def recover_active_signals(
         window_end = stage_fire_ts + _STAGE_WINDOW_SECONDS
         if now > window_end:
             stage = _stage_name_for_status(signal_row.status)
-            await scheduler.record_timeout(  # type: ignore[attr-defined]
+            await scheduler.record_timeout(
                 signal_row.signal_id,
                 stage,
             )
             timed_out += 1
         else:
-            await scheduler.adopt(signal_row)  # type: ignore[attr-defined]
+            await scheduler.adopt(signal_row)
             rehydrated += 1
 
     return RecoveryReport(rehydrated=rehydrated, timed_out=timed_out, abandoned=abandoned)
@@ -104,7 +105,7 @@ def _stage_offset_for_status(status: str) -> int:
     raise ValueError(f"unexpected status: {status!r}")  # pragma: no cover
 
 
-def _stage_name_for_status(status: str) -> str:
+def _stage_name_for_status(status: str) -> Stage:
     """Map status to stage name for record_timeout."""
     if status == "placed_initial":
         return "initial"

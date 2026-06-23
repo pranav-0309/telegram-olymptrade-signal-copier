@@ -143,9 +143,13 @@ async def replay_runner(
             )
             continue
         fire_at = boot_unix + entry.inject_at_offset_seconds
+
+        def _schedule(e: ReplayEntry) -> None:
+            asyncio.create_task(_inject(e))
+
         loop.call_at(
             max(fire_at - time.time(), 0) + loop.time(),
-            lambda e=entry: asyncio.create_task(_inject(e)),
+            lambda e=entry: _schedule(e),  # type: ignore[misc]
         )
 
     try:

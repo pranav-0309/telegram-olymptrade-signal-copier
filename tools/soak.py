@@ -28,7 +28,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from tools.soak_assertions import (
     LivenessRecord,
@@ -54,6 +54,8 @@ def parse_duration(s: str) -> float:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="M9 24h soak harness")
     parser.add_argument("--duration", default="24h", help="Soak duration (e.g. 24h, 5m, 30s)")
     parser.add_argument("--restart-at", default="12h", help="When to force SIGTERM (e.g. 12h, 1m)")
@@ -247,7 +249,7 @@ def _check_cascades_completed_within_60s(
 async def _async_check_completion(
     dsn: str, signal_ids: list[str], restarted_at_unix: float
 ) -> dict[str, bool]:
-    import asyncpg  # type: ignore[import-untyped]
+    import asyncpg
 
     deadline = restarted_at_unix + 60.0
     result: dict[str, bool] = {}
@@ -283,7 +285,7 @@ def _read_signals_stages_from_db(
 
 
 async def _async_read_signals_stages(dsn: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    import asyncpg  # type: ignore[import-untyped]
+    import asyncpg
 
     conn = await asyncpg.connect(dsn)
     try:
@@ -295,7 +297,8 @@ async def _async_read_signals_stages(dsn: str) -> tuple[list[dict[str, Any]], li
 
 
 def _load_fixture(path: Path) -> list[dict[str, Any]]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return cast(list[dict[str, Any]], data)
 
 
 def _read_liveness_records(output_dir: Path) -> list[LivenessRecord]:
