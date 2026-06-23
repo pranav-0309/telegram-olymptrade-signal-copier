@@ -40,6 +40,7 @@ from signal_copier.notify.protocol import Notifier
 
 if TYPE_CHECKING:
     from signal_copier.broker.base import Broker
+    from signal_copier.infra.db_rows import SignalRow
     from signal_copier.infra.state_store import StateStore
 
 _log = logging.getLogger(__name__)
@@ -163,6 +164,74 @@ class Scheduler:
             new_state=new_state.state,
             error_reason=new_state.error_reason,
             updated_at_unix=now_wall,
+        )
+        # If timeout advanced the cascade to a new non-terminal placed_* state,
+        # call adopt() so a fresh supervisor picks up the next stage.
+        if new_state.state in {"placed_initial", "placed_gale1", "placed_gale2"}:
+            updated_row = await self._state_store.get_signal(signal_id)
+            if updated_row is not None:
+                await self.adopt(updated_row)
+
+    async def adopt(self, signal_row: SignalRow) -> None:
+        """Rehydrate a supervisor for a signal that was in-progress at last shutdown.
+
+        Used by M9's recovery module on boot to resume cascades that were
+        in `placed_*` states when the process died. Builds a fresh
+        `SignalSupervisor` (M6's class) and starts it as a task.
+
+        Idempotent: a no-op if signal_row.status is already terminal.
+
+        Caveat: this re-runs the full cascade from the signal's initial
+        state (not the in-progress stage). The M9 recovery model
+        (re-arm + trust broker with grace timer as safety net) means that
+        if the trade has already closed on the broker, the supervisor's
+        `wait_result` resolves immediately; if it's still open, the
+        supervisor waits the full grace window. In both cases, no
+        duplicate trade is placed because the stage's `placed_at_unix`
+        is fixed and the deterministic `trade_id` collides if we
+        re-inserted the stage row (we don't — supervisor skips
+        `record_stage_placed` if the stage already has a row in DB).
+        """
+        if signal_row.status in {"done_win", "done_loss", "done_tie", "error"}:
+            _log.info(
+                "adopt: signal already terminal, skipping: signal_id=%s status=%s",
+                signal_row.signal_id,
+                signal_row.status,
+            )
+            return
+
+        trigger_initial = signal_row.trigger_ts_unix
+        signal = Signal(
+            signal_id=signal_row.signal_id,
+            pair=signal_row.pair,
+            direction=signal_row.direction,
+            trigger_hhmm=signal_row.trigger_hhmm,
+            expiration_seconds=signal_row.expiration_seconds,
+            received_at_unix=signal_row.received_at_unix,
+            source_message_id=signal_row.source_message_id,
+            source_chat_id=signal_row.source_chat_id,
+            raw_text=signal_row.raw_text,
+            trigger_unix_initial=trigger_initial,
+            trigger_unix_gale1=trigger_initial + signal_row.expiration_seconds,
+            trigger_unix_gale2=trigger_initial + 2 * signal_row.expiration_seconds,
+        )
+
+        supervisor = SignalSupervisor(
+            signal=signal,
+            broker=self._broker,
+            state_store=self._state_store,
+            notifier=self._notifier,
+            config=self._config,
+        )
+        task = asyncio.create_task(
+            supervisor.run(), name=f"supervisor-adopted-{signal_row.signal_id}"
+        )
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+        _log.info(
+            "adopt: started supervisor for in-flight signal: signal_id=%s status=%s",
+            signal_row.signal_id,
+            signal_row.status,
         )
 
     async def run(self) -> None:

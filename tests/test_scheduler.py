@@ -924,3 +924,106 @@ async def test_record_timeout_is_idempotent_on_unknown_signal() -> None:
 
     await scheduler.record_timeout("nonexistent", "initial")
     assert state_store.state_updates == []
+
+
+@pytest.mark.asyncio
+async def test_adopt_starts_supervisor_for_placed_signal() -> None:
+    from signal_copier.infra.db_rows import SignalRow
+    from signal_copier.notify.protocol import NoOpNotifier
+    from tests._scheduler_fixtures import FakeBroker, FakeStateStore
+
+    state_store = FakeStateStore()
+    signal_row = SignalRow(
+        signal_id="sig-adopt-1",
+        pair="EUR/JPY",
+        broker_pair="EURJPY",
+        broker_category="forex",
+        direction="down",
+        trigger_hhmm="10:20",
+        trigger_ts_unix=1_700_000_000.0,
+        expiration_seconds=300,
+        received_at_unix=1_700_000_000.0 - 60,
+        source_message_id=1,
+        source_chat_id=-100,
+        raw_text="EUR/JPY;10:20;PUT🟥",
+        status="placed_initial",
+        error_reason=None,
+        created_at_unix=1_700_000_000.0 - 60,
+        updated_at_unix=1_700_000_000.0,
+    )
+
+    config = Config(
+        dry_run=True,
+        amount_initial=Decimal("2.00"),
+        amount_gale1=Decimal("4.00"),
+        amount_gale2=Decimal("8.00"),
+        expiration_seconds=300,
+        trigger_skew_tolerance_seconds=2.0,
+        timezone="America/Sao_Paulo",
+    )
+    broker = FakeBroker()
+    scheduler = Scheduler(
+        queue=asyncio.Queue(),
+        broker=broker,
+        state_store=state_store,  # type: ignore[arg-type]
+        notifier=NoOpNotifier(),
+        config=config,
+    )
+
+    await scheduler.adopt(signal_row)
+
+    assert scheduler.active_task_count == 1
+
+    for _ in range(20):
+        if scheduler.active_task_count == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert scheduler.active_task_count == 0
+
+
+@pytest.mark.asyncio
+async def test_adopt_is_noop_for_terminal_signal() -> None:
+    from signal_copier.infra.db_rows import SignalRow
+    from signal_copier.notify.protocol import NoOpNotifier
+    from tests._scheduler_fixtures import FakeBroker, FakeStateStore
+
+    state_store = FakeStateStore()
+    signal_row = SignalRow(
+        signal_id="sig-terminal",
+        pair="EUR/JPY",
+        broker_pair="EURJPY",
+        broker_category="forex",
+        direction="down",
+        trigger_hhmm="10:20",
+        trigger_ts_unix=1_700_000_000.0,
+        expiration_seconds=300,
+        received_at_unix=1_700_000_000.0 - 60,
+        source_message_id=1,
+        source_chat_id=-100,
+        raw_text="EUR/JPY;10:20;PUT🟥",
+        status="done_win",
+        error_reason=None,
+        created_at_unix=1_700_000_000.0 - 60,
+        updated_at_unix=1_700_000_000.0,
+    )
+
+    config = Config(
+        dry_run=True,
+        amount_initial=Decimal("2.00"),
+        amount_gale1=Decimal("4.00"),
+        amount_gale2=Decimal("8.00"),
+        expiration_seconds=300,
+        trigger_skew_tolerance_seconds=2.0,
+        timezone="America/Sao_Paulo",
+    )
+    broker = FakeBroker()
+    scheduler = Scheduler(
+        queue=asyncio.Queue(),
+        broker=broker,
+        state_store=state_store,  # type: ignore[arg-type]
+        notifier=NoOpNotifier(),
+        config=config,
+    )
+
+    await scheduler.adopt(signal_row)
+    assert scheduler.active_task_count == 0
