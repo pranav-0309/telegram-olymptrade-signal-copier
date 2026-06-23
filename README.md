@@ -8,6 +8,16 @@ Personal tool that listens to a Telegram channel for forex trading signals, pars
 
 Pre-implementation scaffold. Spec lives in [`docs/PRD.md`](docs/PRD.md) (v0.7) and the original idea in [`docs/tool-idea.md`](docs/tool-idea.md).
 
+## Contents
+- [How it works (TL;DR)](#how-it-works-tldr)
+- [Third-party dependency — vendored](#third-party-dependency--vendored)
+- [First-time setup (deploy to Railway)](#first-time-setup-deploy-to-railway)
+- [Local development](#local-development)
+- [Operations](#operations)
+- [Verify the deployment](#verify-the-deployment)
+- [Risks](#%E2%9A%A0%EF%B8%8F-risks)
+- [License](#license)
+
 ## How it works (TL;DR)
 
 1. Connect to a personal Telegram account (Telethon, MTProto)
@@ -39,4 +49,6 @@ See [`src/olymptrade_ws/VENDORED.md`](src/olymptrade_ws/VENDORED.md) for the ups
 
 ## License
 
-Project license TBD. The vendored `olymptrade_ws/` retains its original MIT license — see [`src/olymptrade_ws/LICENSE`](src/olymptrade_ws/LICENSE).
+This project is licensed under [PolyForm Strict 1.0.0](LICENSE). Free to use, modify, and distribute; you may not sell this work or any derivative work.
+
+The vendored `olymptrade_ws/` retains its original MIT license — see [`src/olymptrade_ws/LICENSE`](src/olymptrade_ws/LICENSE).
