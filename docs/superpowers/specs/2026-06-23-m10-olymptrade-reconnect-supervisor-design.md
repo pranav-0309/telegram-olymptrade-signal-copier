@@ -327,7 +327,7 @@ class FakeClientFactory:
     def __call__(self) -> FakeOlympTradeClient: ...
 ```
 
-### 9.3 Test cases (11 tests, target ≥90% line coverage)
+### 9.3 Test cases (13 tests, target ≥90% line coverage)
 
 | # | Name | Setup | Assertion |
 |---|---|---|---|
