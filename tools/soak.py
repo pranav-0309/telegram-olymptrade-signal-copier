@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import signal
 import subprocess
@@ -35,6 +36,9 @@ from tools.soak_assertions import (
     RestartDrillResult,
     assert_invariants,
 )
+
+LIVENESS_INTERVAL_GETME_SECONDS: float = 30 * 60
+LIVENESS_INTERVAL_ISCONNECTED_SECONDS: float = 60
 
 
 def parse_duration(s: str) -> float:
@@ -126,6 +130,12 @@ async def _run(
 
     boot_unix = time.time()
     print(f"[soak] starting app subprocess at {datetime.utcnow().isoformat()}Z", flush=True)
+    cancel_liveness = asyncio.Event()
+    liveness_task = asyncio.create_task(
+        _liveness_probe(
+            env=child_env, output_dir=output_dir, duration_s=duration_s, cancel=cancel_liveness
+        )  # noqa: E501
+    )
     proc = subprocess.Popen(
         [sys.executable, "-m", "signal_copier"],
         env=child_env,
@@ -174,6 +184,10 @@ async def _run(
         completed_within_60s=completed_within_60s,
     )
 
+    cancel_liveness.set()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await liveness_task
+
     signals, stages = _read_signals_stages_from_db()
     fixture = _load_fixture(fixtures_path)
     liveness_records = _read_liveness_records(output_dir)
@@ -219,8 +233,109 @@ def _load_fixture(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_liveness_records(output_dir: Path) -> list[LivenessRecord]:
-    """Stub for Task 16: replaced with real JSONL liveness log reader."""
-    return []
+    """Read the liveness JSONL log into LivenessRecord objects."""
+    path = output_dir / "liveness.jsonl"
+    if not path.exists():
+        return []
+    records: list[LivenessRecord] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            obj = json.loads(line)
+            records.append(
+                LivenessRecord(timestamp=float(obj["timestamp"]), connected=bool(obj["connected"]))
+            )  # noqa: E501
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+    return records
+
+
+async def _liveness_probe(
+    *,
+    env: dict[str, str],
+    output_dir: Path,
+    duration_s: float,
+    cancel: asyncio.Event,
+) -> None:
+    """Owns a separate Telethon client; pings get_me() every 30 min, is_connected every 1 min."""
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+
+    liveness_path = output_dir / "liveness.jsonl"
+    api_id = int(env.get("TELEGRAM_API_ID", "0"))
+    api_hash = env.get("TELEGRAM_API_HASH", "")
+    session_string = env.get("TELEGRAM_SESSION_STRING", "")
+
+    if not (api_id and api_hash and session_string):
+        with liveness_path.open("w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "timestamp": time.time(),
+                        "connected": False,
+                        "skipped": True,
+                        "reason": "missing TELEGRAM_API_ID/HASH/SESSION_STRING",
+                    }
+                )
+                + "\n"
+            )
+        return
+
+    client = TelegramClient(StringSession(session_string), api_id, api_hash)
+    await client.connect()
+    if not await client.is_user_authorized():
+        with liveness_path.open("w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "timestamp": time.time(),
+                        "connected": False,
+                        "skipped": True,
+                        "reason": "session not authorized",
+                    }
+                )
+                + "\n"
+            )
+        await client.disconnect()
+        return
+
+    start = time.time()
+    with liveness_path.open("w", encoding="utf-8") as f:
+        last_getme = 0.0
+        last_isconnected = 0.0
+        while not cancel.is_set() and (time.time() - start) < duration_s:
+            now = time.time()
+            record: dict[str, Any]
+            if now - last_getme >= LIVENESS_INTERVAL_GETME_SECONDS:
+                try:
+                    await client.get_me()
+                    record = {"timestamp": now, "connected": True, "method": "get_me"}
+                    last_getme = now
+                except Exception as exc:
+                    record = {
+                        "timestamp": now,
+                        "connected": False,
+                        "method": "get_me",
+                        "error": str(exc),
+                    }  # noqa: E501
+            elif now - last_isconnected >= LIVENESS_INTERVAL_ISCONNECTED_SECONDS:
+                try:
+                    connected = bool(await client.is_connected())
+                    record = {"timestamp": now, "connected": connected, "method": "is_connected"}
+                    last_isconnected = now
+                except Exception as exc:
+                    record = {
+                        "timestamp": now,
+                        "connected": False,
+                        "method": "is_connected",
+                        "error": str(exc),
+                    }  # noqa: E501
+            else:
+                await asyncio.sleep(5)
+                continue
+            f.write(json.dumps(record) + "\n")
+            f.flush()
+            await asyncio.sleep(5)
+    await client.disconnect()
 
 
 if __name__ == "__main__":
