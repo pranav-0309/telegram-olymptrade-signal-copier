@@ -58,3 +58,6 @@ data/
 
 # OS
 .DS_Store
+
+# Graphify internal cache (regenerable from inputs)
+graphify-out/cache/
