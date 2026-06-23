@@ -913,6 +913,12 @@ Significant edits that change the source of truth. Minor copy-edits are not logg
 - **Test surface**: 13 supervisor tests in `tests/test_reconnect_supervisor.py` (3 protocol-satisfaction, 3 connect lifecycle, 4 event-driven + watcher, 3 circuit breaker); 3 new NoOpNotifier tests; 3 new TelegramDM tests; extended `RecordingNotifier`; new `FakeClientFactory` fixture.
 - **Spec**: `docs/superpowers/specs/2026-06-23-m10-olymptrade-reconnect-supervisor-design.md`. Plan: `docs/superpowers/plans/2026-06-23-m10-olymptrade-reconnect-supervisor.md`. No edits to vendored `olymptrade_ws` (R-15).
 
+### v0.9 — M11 Railway deployment, runbook & project license
+
+- **M11 complete.** The operational layer for shipping the tool as an unattended Railway service: GitHub Actions CI/CD (5 jobs: lint, format, typecheck, test with PG service container, deploy-on-push-to-main), interactive `python -m signal_copier.telegram.auth` helper (now with Railway-detection guard, `get_me()` session verification, and rich output banner with security warning), `docker-compose.yml` for local Postgres dev, complete README runbook (First-time setup, Local development, Operations, Verify the deployment, Troubleshooting), and **PolyForm Strict 1.0.0** as the project license (closes the "Project license TBD" hole from the README).
+- **M11 spec:** `docs/superpowers/specs/2026-06-23-m11-railway-deployment-design.md`. Plan: `docs/superpowers/plans/2026-06-23-m11-railway-deployment.md`. No edits to vendored `olymptrade_ws/` (R-15).
+- **License:** PolyForm Strict 1.0.0 — free use/modify/distribute; no sale of the work or any derivative. See `LICENSE` and the License section in the README. Compatible with the vendored `olymptrade_ws` MIT license; both license texts are present in the repo and `COPY`'d into the Docker image.
+
 ### v0.6 — Strict time-window enforcement
 
 - Strict time-window enforcement across all 3 stages (FR-3.3, FR-3.6, FR-5.9) — a missed fire time on any stage ends the cascade with `error (signal_expired)`; no retry, no shifting, no skip-to-next-stage.
