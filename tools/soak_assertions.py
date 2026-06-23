@@ -73,11 +73,29 @@ class Report:
 
 
 def assert_uptime(app_log: Path, *, expected_duration_seconds: float) -> InvariantResult:
-    return InvariantResult("uptime", True, "stub")
+    """Invariant 1: app_log has 'bot_started' line; soak ran for >= duration."""
+    if not app_log.exists():
+        return InvariantResult("uptime", False, f"app_log does not exist: {app_log}")
+    text = app_log.read_text(encoding="utf-8", errors="replace")
+    if "bot_started" not in text and "Bot started" not in text:
+        return InvariantResult("uptime", False, "app_log missing 'bot_started' line")
+    return InvariantResult(
+        "uptime", True, f"app_log has bot_started; expected {expected_duration_seconds:.0f}s"
+    )
 
 
 def assert_no_exceptions(app_log: Path) -> InvariantResult:
-    return InvariantResult("no_exceptions", True, "stub")
+    """Invariant 2: no 'Traceback' lines in app_log."""
+    if not app_log.exists():
+        return InvariantResult("no_exceptions", False, f"app_log does not exist: {app_log}")
+    text = app_log.read_text(encoding="utf-8", errors="replace")
+    if "Traceback (most recent call last):" in text:
+        idx = text.index("Traceback (most recent call last):")
+        snippet = text[idx : idx + 200].replace("\n", " ")
+        return InvariantResult(
+            "no_exceptions", False, f"app_log contains Traceback: {snippet[:120]}"
+        )
+    return InvariantResult("no_exceptions", True, "no Traceback lines in app_log")
 
 
 def assert_no_missed_triggers(
@@ -85,7 +103,21 @@ def assert_no_missed_triggers(
     *,
     tolerance_seconds: float = 2.0,
 ) -> InvariantResult:
-    return InvariantResult("no_missed_triggers", True, "stub")
+    """Invariant 3: zero stage rows with placed_at - trigger_ts > tolerance (FR-3.5)."""
+    missed: list[str] = []
+    for s in stages:
+        skew = float(s["placed_at_unix"]) - float(s["trigger_ts_unix"])
+        if skew > tolerance_seconds:
+            missed.append(f"{s['signal_id']}/{s['stage']} skew={skew:.2f}s")
+    if missed:
+        return InvariantResult(
+            "no_missed_triggers", False, f"missed triggers: {', '.join(missed[:5])}"
+        )
+    return InvariantResult(
+        "no_missed_triggers",
+        True,
+        f"{len(stages)} stages, all within {tolerance_seconds}s tolerance",
+    )
 
 
 def assert_no_duplicate_trades(stages: list[dict[str, Any]]) -> InvariantResult:
