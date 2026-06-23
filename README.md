@@ -141,6 +141,76 @@ uv run ruff format --check       # format check (CI fails if unformatted)
 uv run mypy --strict src tests   # type check (CI fails on any error)
 ```
 
+## Operations
+
+### View logs
+
+```bash
+railway logs --tail              # or open the service's Logs tab in Railway
+```
+
+Logs are also mirrored to the Telegram self-DM at every state transition (PRD §4.7). Use whichever is more convenient.
+
+### Restart the bot
+
+```bash
+railway restart                   # or click "Restart" in the dashboard
+```
+
+Useful if the bot gets into a wedged state that auto-restart didn't fix (e.g., a DB connection that the pool didn't recover from after ~30s).
+
+### Trigger a manual redeploy
+
+Either push a no-op commit:
+
+```bash
+git commit --allow-empty -m "trigger redeploy"
+git push origin main
+```
+
+Or use the Railway dashboard's "Restart" button (same effect for a single-service app).
+
+### Rotate the Telegram session
+
+If your session string was leaked, or Telegram reset it (rare):
+
+```bash
+uv run python -m signal_copier.telegram.auth
+# paste the new value into Railway Variables → TELEGRAM_SESSION_STRING
+# restart the service
+```
+
+### Rotate the OlympTrade access_token
+
+Tokens expire periodically (OlympTrade may force-rotate; sessions can also time out). To rotate:
+
+1. Open OlympTrade in a browser, log in.
+2. DevTools → Network → any authenticated request → copy the JWT from the `Authorization: Bearer ...` header.
+3. Paste into Railway Variables → `OLYMP_ACCESS_TOKEN`.
+4. Restart the service.
+
+The M10 self-healing reconnect supervisor (PRD §15 M10) handles transient WS drops without restart; a true token rejection requires a restart.
+
+### Wipe the database (destructive)
+
+Use the Railway Postgres service's Data tab → query editor:
+
+```sql
+DROP TABLE stages; DROP TABLE signals; DROP TABLE daily_summary;
+```
+
+The bot recreates all three on next startup (idempotent migrations). Use this only for a clean slate; you'll lose all trade history.
+
+### Set daily safety limits
+
+Edit env vars (any of):
+
+- `DAILY_LOSS_LIMIT=50.00` — halt after $50 of realized losses today
+- `DAILY_TRADE_LIMIT=50` — halt after 50 trades today
+- `DAILY_DRAWDOWN_PCT=20` — halt after 20% drawdown
+
+`0` (default) = disabled. Restart the service to pick up new values.
+
 ## ⚠️ Risks
 
 - **Telegram ToS:** uses a personal user account, not a bot. Ban risk is real and accepted by the owner.
