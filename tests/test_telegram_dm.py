@@ -498,3 +498,63 @@ async def test_parse_failure() -> None:
         "Reason: missing_signal_line\n"
         f"Preview: {raw[:80]}"
     )
+
+
+# --- M10 reconnect-lifecycle notifications -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_telegram_dm_on_olymp_disconnect() -> None:
+    """Softened copy: M10 reconnect supervisor will attempt reconnection,
+    so the disconnect message says 'Reconnecting…' (not 'Process will exit')."""
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_olymp_disconnect()
+    assert fake.sent == ["🔌 OlympTrade disconnected. Reconnecting…"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_dm_on_olymp_reconnecting() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_olymp_reconnecting(
+        attempt=2,
+        max_attempts=5,
+        downtime_seconds=3.0,
+        next_delay_seconds=2.0,
+    )
+    assert fake.sent == [
+        "🔁 OlympTrade reconnecting (attempt 2/5)\nDowntime: 3.0s\nNext retry in 2.0s",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_dm_on_olymp_reconnected() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_olymp_reconnected(
+        attempts_used=1,
+        total_downtime_seconds=12.3,
+    )
+    assert fake.sent == [
+        "✅ OlympTrade reconnected\n"
+        "Attempts: 1\n"
+        "Total downtime: 12.3s\n"
+        "Action: resumed normal operation. "
+        "In-flight cascades (if any) were ended with broker_unavailable."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_dm_on_olymp_reconnect_failed() -> None:
+    fake = FakeTgClient()
+    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    await notifier.on_olymp_reconnect_failed(
+        attempts=5,
+        total_downtime_seconds=67.8,
+    )
+    assert fake.sent == [
+        "❌ OlympTrade reconnect failed after 5 attempts\n"
+        "Total downtime: 67.8s\n"
+        "Action: process will exit; Railway supervisor will restart."
+    ]
