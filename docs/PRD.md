@@ -906,6 +906,13 @@ Significant edits that change the source of truth. Minor copy-edits are not logg
 - **§17.1 (Hosting comparison):** "OlympTradeAPI" → "vendored `olymptrade_ws`".
 - **§17.4 (Dockerfile row):** Added requirement to `COPY src/olymptrade_ws/LICENSE` (MIT compliance).
 
+### v0.8 — M10 self-healing OlympTrade reconnect supervisor
+
+- **M10 complete.** New `ReconnectingOlympTradeBroker` wrapper at `src/signal_copier/broker/reconnect.py` detects WS drops via 1s polling watcher + event-driven `place/wait_result` ConnectionError path. On disconnect, runs exponential-backoff reconnect loop (1s → 30s cap, max 5 attempts). On exhaustion: `BrokerAuthError` → `__main__` exit-2 → Railway restart. In-flight cascades end with `error_reason='broker_unavailable'` (existing M6 mapping).
+- **Notifier Protocol +3 methods**: `on_olymp_reconnecting`, `on_olymp_reconnected`, `on_olymp_reconnect_failed`. `TelegramDMNotifier` implements with FR-7.1-aligned DM copy. `on_olymp_disconnect` copy softened from "Process will exit; supervisor will restart" to "Reconnecting…".
+- **Test surface**: 13 supervisor tests in `tests/test_reconnect_supervisor.py` (3 protocol-satisfaction, 3 connect lifecycle, 4 event-driven + watcher, 3 circuit breaker); 3 new NoOpNotifier tests; 3 new TelegramDM tests; extended `RecordingNotifier`; new `FakeClientFactory` fixture.
+- **Spec**: `docs/superpowers/specs/2026-06-23-m10-olymptrade-reconnect-supervisor-design.md`. Plan: `docs/superpowers/plans/2026-06-23-m10-olymptrade-reconnect-supervisor.md`. No edits to vendored `olymptrade_ws` (R-15).
+
 ### v0.6 — Strict time-window enforcement
 
 - Strict time-window enforcement across all 3 stages (FR-3.3, FR-3.6, FR-5.9) — a missed fire time on any stage ends the cascade with `error (signal_expired)`; no retry, no shifting, no skip-to-next-stage.
