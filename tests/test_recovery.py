@@ -138,3 +138,60 @@ def test_stage_window_seconds_constant_is_correct() -> None:
     """PRD FR-5.3: grace is 30s. Window = expiration + 30."""
     # 300s expiration + 30s grace = 330s window from stage fire time.
     assert _STAGE_WINDOW_SECONDS == 330
+
+
+@pytest.mark.asyncio
+async def test_recover_expired_window_calls_record_timeout() -> None:
+    """A placed_* signal whose stage window has CLOSED → scheduler.record_timeout().
+
+    Stage fired 600 seconds ago; window (expiration+grace=330s) is past.
+    Recovery records timeout (state machine then advances or ends cascade).
+    """
+    stage_fire = 1_700_000_000.0
+    now = stage_fire + 600.0  # 10 minutes after placement → window past
+
+    store = FakeStateStore()
+    signal_row = _make_signal_row(status="placed_initial", trigger_ts_unix=stage_fire)
+    store.signals = {signal_row.signal_id: signal_row}
+
+    scheduler = RecordingScheduler()
+
+    report = await recover_active_signals(
+        state_store=store,  # type: ignore[arg-type]
+        broker=object(),
+        scheduler=scheduler,  # type: ignore[arg-type]
+        now_unix=now,
+    )
+
+    assert report.rehydrated == 0
+    assert report.timed_out == 1
+    assert scheduler.timed_out == [("sig-001", "initial")]
+    assert scheduler.adopted == []
+
+
+@pytest.mark.asyncio
+async def test_recover_expired_gale2_window() -> None:
+    """placed_gale2 with expired window → record_timeout(stage='gale2')."""
+    trigger = 1_700_000_000.0
+    gale2_fire = trigger + 600.0  # gale2 = trigger + 2*expiration
+    now = gale2_fire + 600.0  # well past gale2's window
+
+    store = FakeStateStore()
+    signal_row = _make_signal_row(
+        signal_id="sig-g2",
+        status="placed_gale2",
+        trigger_ts_unix=trigger,
+    )
+    store.signals = {signal_row.signal_id: signal_row}
+
+    scheduler = RecordingScheduler()
+
+    report = await recover_active_signals(
+        state_store=store,  # type: ignore[arg-type]
+        broker=object(),
+        scheduler=scheduler,  # type: ignore[arg-type]
+        now_unix=now,
+    )
+
+    assert report.timed_out == 1
+    assert scheduler.timed_out == [("sig-g2", "gale2")]
