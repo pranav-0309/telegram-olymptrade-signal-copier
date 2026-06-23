@@ -234,3 +234,66 @@ def test_invariant_6_row_counts_match_expected_fails_when_mismatch() -> None:
 
     r = assert_row_counts_match_expected(signals, stages, fixture)
     assert not r.passed
+
+
+def test_invariant_7_restart_drill_passes_when_all_completed_in_60s() -> None:
+    from tools.soak_assertions import RestartDrillResult, assert_restart_drill
+
+    drill = RestartDrillResult(
+        restart_at_unix=1000.0,
+        restarted_at_unix=1010.0,
+        in_flight_signal_ids=["s1", "s2"],
+        completed_within_60s={"s1": True, "s2": True},
+    )
+    r = assert_restart_drill(drill)
+    assert r.passed
+
+
+def test_invariant_7_restart_drill_fails_when_cascade_did_not_complete() -> None:
+    from tools.soak_assertions import RestartDrillResult, assert_restart_drill
+
+    drill = RestartDrillResult(
+        restart_at_unix=1000.0,
+        restarted_at_unix=1010.0,
+        in_flight_signal_ids=["s1", "s2"],
+        completed_within_60s={"s1": True, "s2": False},
+    )
+    r = assert_restart_drill(drill)
+    assert not r.passed
+    assert "s2" in r.detail
+
+
+def test_invariant_8_telegram_liveness_passes_with_one_per_hour() -> None:
+    from tools.soak_assertions import LivenessRecord, assert_telegram_liveness
+
+    now = 1_700_000_000.0
+    records = [LivenessRecord(timestamp=now + i * 3600, connected=True) for i in range(25)]
+    r = assert_telegram_liveness(records, soak_duration_seconds=24 * 3600)
+    assert r.passed
+
+
+def test_invariant_8_telegram_liveness_fails_with_too_few() -> None:
+    from tools.soak_assertions import LivenessRecord, assert_telegram_liveness
+
+    now = 1_700_000_000.0
+    records = [LivenessRecord(timestamp=now + i * 3600, connected=True) for i in range(5)]
+    r = assert_telegram_liveness(records, soak_duration_seconds=24 * 3600)
+    assert not r.passed
+
+
+def test_invariant_9_per_signal_outcomes_with_signal_id_match() -> None:
+    from tools.soak_assertions import assert_per_signal_outcomes
+
+    signals = [{"signal_id": "s1", "status": "done_win"}]
+    fixture = [{"id": "f1", "signal_id": "s1", "expected_outcome": "win_at_initial"}]
+    r = assert_per_signal_outcomes(signals, fixture)
+    assert r.passed
+
+
+def test_invariant_9_per_signal_outcomes_mismatch_fails() -> None:
+    from tools.soak_assertions import assert_per_signal_outcomes
+
+    signals = [{"signal_id": "s1", "status": "done_win"}]
+    fixture = [{"id": "f1", "signal_id": "s1", "expected_outcome": "full_loss"}]
+    r = assert_per_signal_outcomes(signals, fixture)
+    assert not r.passed

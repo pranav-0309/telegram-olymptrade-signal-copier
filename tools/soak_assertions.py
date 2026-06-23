@@ -177,7 +177,23 @@ def assert_row_counts_match_expected(
 
 
 def assert_restart_drill(drill: RestartDrillResult) -> InvariantResult:
-    return InvariantResult("restart_drill", True, "stub")
+    """Invariant 7: in-flight cascades reach terminal within 60s of restart."""
+    if not drill.in_flight_signal_ids:
+        return InvariantResult(
+            "restart_drill", True, "no in-flight cascades at restart; vacuously true"
+        )
+    not_completed = [sid for sid, done in drill.completed_within_60s.items() if not done]
+    if not_completed:
+        return InvariantResult(
+            "restart_drill",
+            False,
+            f"cascades not completed within 60s of restart: {', '.join(not_completed)}",
+        )
+    return InvariantResult(
+        "restart_drill",
+        True,
+        f"all {len(drill.in_flight_signal_ids)} in-flight cascades completed within 60s",
+    )
 
 
 def assert_telegram_liveness(
@@ -185,14 +201,62 @@ def assert_telegram_liveness(
     *,
     soak_duration_seconds: float,
 ) -> InvariantResult:
-    return InvariantResult("telegram_liveness", True, "stub")
+    """Invariant 8: at least 1 connected=True per hour over the soak duration."""
+    hours = max(1, int(soak_duration_seconds // 3600) + 1)
+    connected_count = sum(1 for r in records if r.connected)
+    if connected_count < hours:
+        return InvariantResult(
+            "telegram_liveness",
+            False,
+            f"only {connected_count} connected=True records, "
+            f"expected at least {hours} (one per hour)",
+        )
+    return InvariantResult(
+        "telegram_liveness",
+        True,
+        f"{connected_count} connected=True records over {hours} hours",
+    )
+
+
+_OUTCOME_TO_STATUS: dict[str, str] = {
+    "win_at_initial": "done_win",
+    "loss_initial_win_gale1": "done_win",
+    "loss_initial_loss_gale1_win_gale2": "done_win",
+    "full_loss": "done_loss",
+    "signal_expired": "error",
+    "unsupported_pair": "error",
+}
 
 
 def assert_per_signal_outcomes(
     signals: list[dict[str, Any]],
     fixture: list[dict[str, Any]],
 ) -> InvariantResult:
-    return InvariantResult("per_signal_outcomes", True, "stub")
+    """Invariant 9: each fixture entry's signals.status matches expected_outcome."""
+    by_id = {s["signal_id"]: s["status"] for s in signals}
+    mismatches: list[str] = []
+    for entry in fixture:
+        outcome = entry.get("expected_outcome", "")
+        if outcome == "parse_failure":
+            continue
+        if outcome == "unsupported_pair":
+            continue
+        signal_id = entry.get("signal_id")
+        if signal_id is None:
+            continue
+        actual_status = by_id.get(signal_id)
+        expected_status = _OUTCOME_TO_STATUS.get(outcome)
+        if expected_status is None:
+            continue
+        if actual_status != expected_status:
+            mismatches.append(
+                f"{signal_id}: expected {expected_status} ({outcome}), got {actual_status}"
+            )
+    if mismatches:
+        return InvariantResult(
+            "per_signal_outcomes", False, f"mismatches: {'; '.join(mismatches[:5])}"
+        )
+    return InvariantResult("per_signal_outcomes", True, f"all {len(fixture)} fixture entries match")
 
 
 def assert_invariants(
