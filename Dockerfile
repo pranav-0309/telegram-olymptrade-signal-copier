@@ -16,6 +16,7 @@ RUN uv sync --frozen --no-dev
 # Now copy the rest
 COPY src/ ./src/
 COPY migrations/ ./migrations/
+COPY LICENSE ./LICENSE
 
 # Run as non-root
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
