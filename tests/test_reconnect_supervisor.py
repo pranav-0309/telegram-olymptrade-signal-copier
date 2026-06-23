@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from signal_copier.broker.base import Broker
+from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.olymp import OlympTradeBroker
 from signal_copier.broker.reconnect import (
     ReconnectingOlympTradeBroker,
@@ -234,3 +234,151 @@ def test_compute_backoff_seconds_caps_at_30() -> None:
     assert compute_backoff_seconds(4) == 16.0
     assert compute_backoff_seconds(5) == 30.0
     assert compute_backoff_seconds(10) == 30.0
+
+
+@pytest.fixture
+def fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reduce reconnect backoff to ~1ms so the exhaustion tests don't wait 31s."""
+    monkeypatch.setattr("signal_copier.broker.reconnect._BACKOFF_BASE_SECONDS", 0.001)
+    monkeypatch.setattr("signal_copier.broker.reconnect._BACKOFF_CAP_SECONDS", 0.001)
+
+
+async def test_reconnect_exhausts_after_max_attempts(
+    notifier: RecordingNotifier,
+    fast_backoff: None,
+) -> None:
+    """5 consecutive failures → BrokerAuthError + on_olymp_reconnect_failed fired."""
+    bad_fakes = [FakeOlympTradeClient() for _ in range(5)]
+
+    async def bad_start() -> None:
+        raise BrokerAuthError("token rejected")
+
+    for f in bad_fakes:
+        f.start = bad_start  # type: ignore[method-assign]
+
+    factory = FakeClientFactory(bad_fakes)
+    wrapper = _make_wrapper(
+        notifier,
+        factory,
+        reconnect_max_attempts=5,
+        watcher_poll_seconds=10.0,
+    )
+    _patch_build_inner(wrapper)
+
+    # Pre-populate _inner with a real connected fake so close() inside the
+    # reconnect loop succeeds (and so the wrapper has something to tear down).
+    good_inner_factory = FakeClientFactory([FakeOlympTradeClient()])
+    wrapper._client_factory = good_inner_factory
+    wrapper._inner = wrapper._build_inner()
+    await wrapper._inner.connect()
+
+    # Now swap to the bad factory and trigger the reconnect loop.
+    wrapper._client_factory = factory
+
+    with pytest.raises(BrokerAuthError, match="reconnect exhausted"):
+        await wrapper._trigger_reconnect()
+
+    methods = [m for m, _ in notifier.calls]
+    assert "on_olymp_disconnect" in methods
+    assert methods.count("on_olymp_reconnecting") == 5
+    assert "on_olymp_reconnect_failed" in methods
+
+
+async def test_reconnect_resets_failure_counter_on_success(
+    notifier: RecordingNotifier,
+    fast_backoff: None,
+) -> None:
+    """After a successful reconnect, a NEW disconnect can run the full N attempts again.
+
+    Cycle 1: bad_fake[0] raises → counter=1, then good_fake[1] succeeds → counter=0.
+    Cycle 2: 3 bad fakes → counter climbs to 3 → BrokerAuthError (exhaustion).
+    """
+    bad_fake = FakeOlympTradeClient()
+
+    async def bad_start() -> None:
+        raise BrokerAuthError("transient")
+
+    bad_fake.start = bad_start  # type: ignore[method-assign]
+
+    good_fake = FakeOlympTradeClient()
+    # Use a good-only factory for the initial connect so wrapper._build_inner()
+    # returns a connected inner.
+    wrapper = _make_wrapper(
+        notifier,
+        FakeClientFactory([good_fake]),
+        reconnect_max_attempts=3,
+        watcher_poll_seconds=10.0,
+    )
+    _patch_build_inner(wrapper)
+
+    wrapper._inner = wrapper._build_inner()
+    await wrapper._inner.connect()
+
+    # First reconnect cycle: attempt 1 fails, attempt 2 succeeds.
+    wrapper._client_factory = FakeClientFactory([bad_fake, good_fake])
+    await wrapper._trigger_reconnect()
+    assert wrapper._consecutive_failures == 0
+
+    # Second disconnect: all 3 attempts fail → exhaustion → BrokerAuthError.
+    bad_fake2 = FakeOlympTradeClient()
+
+    async def bad_start2() -> None:
+        raise BrokerAuthError("permanent")
+
+    bad_fake2.start = bad_start2  # type: ignore[method-assign]
+    wrapper._client_factory = FakeClientFactory([bad_fake2, bad_fake2, bad_fake2])
+
+    with pytest.raises(BrokerAuthError, match="reconnect exhausted"):
+        await wrapper._trigger_reconnect()
+
+
+async def test_concurrent_detection_only_one_reconnect_loop(
+    notifier: RecordingNotifier,
+) -> None:
+    """Watcher + in-flight place() detect disconnect simultaneously → only ONE
+    reconnect loop runs (asyncio.Lock + state-check guard in `_trigger_reconnect`).
+
+    Timing:
+    - t=0: connect() returns. Watcher is in watcher_loop, sleeping 0.02s.
+    - t=0: flip fake0.connection._connected = False.
+    - t=0.02-0.04: watcher polls, sees disconnected, enters _trigger_reconnect
+      (state → RECONNECTING, lock held). Starts 1s backoff sleep.
+    - t=0.05: test wakes up. fake0.trade.raise_on_call set.
+    - t=0.05: place() called → inner raises ConnectionError → _trigger_reconnect
+      sees state=RECONNECTING, takes fast path (waits for lock).
+    - t=~1.02: watcher's reconnect completes (fake1 succeeds). Lock released.
+    - t=~1.02: place() returns (re-raises ConnectionError).
+
+    Asserts exactly ONE on_olymp_disconnect notification.
+    """
+    fake0 = FakeOlympTradeClient()
+    fake1 = FakeOlympTradeClient()
+    factory = FakeClientFactory([fake0, fake1])
+    wrapper = _make_wrapper(
+        notifier,
+        factory,
+        reconnect_max_attempts=3,
+        watcher_poll_seconds=0.02,
+    )
+    _patch_build_inner(wrapper)
+
+    await wrapper.connect()
+
+    # Trigger reconnect from two coroutines "simultaneously".
+    fake0.connection._connected = False
+    # Let the watcher start its reconnect (poll interval is 0.02s).
+    await asyncio.sleep(0.05)
+
+    # Now also trigger via place() while the watcher is still in flight.
+    sig = make_signal()
+    assert wrapper._inner is not None
+    wrapper._inner._client.trade.raise_on_call = ConnectionError("WS down")
+    with pytest.raises(ConnectionError):
+        await wrapper.place(sig, stage="initial", amount=Decimal("2.00"))
+
+    # Count on_olymp_disconnect calls — must be exactly 1.
+    methods = [m for m, _ in notifier.calls]
+    disconnect_count = methods.count("on_olymp_disconnect")
+    assert disconnect_count == 1, (
+        f"expected exactly 1 disconnect notification, got {disconnect_count}: " f"{methods}"
+    )
