@@ -379,6 +379,105 @@ async def test_concurrent_detection_only_one_reconnect_loop(
     # Count on_olymp_disconnect calls — must be exactly 1.
     methods = [m for m, _ in notifier.calls]
     disconnect_count = methods.count("on_olymp_disconnect")
-    assert disconnect_count == 1, (
-        f"expected exactly 1 disconnect notification, got {disconnect_count}: " f"{methods}"
+    assert (
+        disconnect_count == 1
+    ), f"expected exactly 1 disconnect notification, got {disconnect_count}: {methods}"
+
+
+# --- State-check branch regression tests (Task 6 follow-up) ----------------
+
+
+from signal_copier.broker.reconnect import _ConnectionState  # noqa: E402
+
+
+async def test_place_during_reconnect_surfaces_clean_connection_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """When state=RECONNECTING, place() must surface the wrapper-owned
+    ConnectionError("broker reconnecting") without re-entering inner.
+
+    This locks in the fix from commit fcf40f2 (place/wait_result 3-way state
+    check) against regression — without this test, a future refactor could
+    drop the state check and leak BrokerAuthError from the closed inner.
+    """
+    from tests._broker_fixtures import FakeClientFactory, FakeOlympTradeClient, make_signal
+
+    fake0, fake1 = FakeOlympTradeClient(), FakeOlympTradeClient()
+    factory = FakeClientFactory([fake0, fake1])
+    wrapper = _make_wrapper(
+        notifier,
+        factory,
+        reconnect_max_attempts=3,
+        watcher_poll_seconds=10.0,
     )
+    _patch_build_inner(wrapper)
+    await wrapper.connect()
+
+    # Force RECONNECTING state without involving the watcher.
+    wrapper._state = _ConnectionState.RECONNECTING
+
+    # Hold the lock so the fast path blocks; release after a short delay.
+    await wrapper._reconnect_lock.acquire()
+
+    async def release_lock() -> None:
+        await asyncio.sleep(0.05)
+        wrapper._reconnect_lock.release()
+
+    asyncio.create_task(release_lock())
+
+    sig = make_signal()
+    with pytest.raises(ConnectionError, match="broker reconnecting"):
+        await wrapper.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_place_when_disconnected_raises_connection_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """When state=DISCONNECTED (exhaustion), place() must raise ConnectionError
+    directly without touching inner."""
+    from tests._broker_fixtures import FakeClientFactory, FakeOlympTradeClient, make_signal
+
+    fake = FakeOlympTradeClient()
+    factory = FakeClientFactory([fake])
+    wrapper = _make_wrapper(
+        notifier,
+        factory,
+        reconnect_max_attempts=3,
+        watcher_poll_seconds=10.0,
+    )
+    _patch_build_inner(wrapper)
+    await wrapper.connect()
+
+    wrapper._state = _ConnectionState.DISCONNECTED
+
+    sig = make_signal()
+    with pytest.raises(ConnectionError, match="broker disconnected"):
+        await wrapper.place(sig, stage="initial", amount=Decimal("2.00"))
+
+
+async def test_wait_result_during_reconnect_surfaces_clean_connection_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """Same regression test as place() but for wait_result()."""
+    fake0, fake1 = FakeOlympTradeClient(), FakeOlympTradeClient()
+    factory = FakeClientFactory([fake0, fake1])
+    wrapper = _make_wrapper(
+        notifier,
+        factory,
+        reconnect_max_attempts=3,
+        watcher_poll_seconds=10.0,
+    )
+    _patch_build_inner(wrapper)
+    await wrapper.connect()
+
+    wrapper._state = _ConnectionState.RECONNECTING
+    await wrapper._reconnect_lock.acquire()
+
+    async def release_lock() -> None:
+        await asyncio.sleep(0.05)
+        wrapper._reconnect_lock.release()
+
+    asyncio.create_task(release_lock())
+
+    with pytest.raises(ConnectionError, match="broker reconnecting"):
+        await wrapper.wait_result("fake-trade-id", timeout=1.0)
