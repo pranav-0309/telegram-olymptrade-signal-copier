@@ -145,7 +145,7 @@ async def _run(
 
     await asyncio.sleep(restart_at_s)
     print(f"[soak] sending SIGTERM at {datetime.utcnow().isoformat()}Z", flush=True)
-    in_flight_signal_ids = _read_in_flight_signals_from_db()  # stub for Task 15
+    in_flight_signal_ids = _read_in_flight_signals_from_db(env=child_env)
     proc.send_signal(signal.SIGTERM)
     try:
         proc.wait(timeout=10)
@@ -175,7 +175,7 @@ async def _run(
         proc.wait(timeout=5)
 
     completed_within_60s = _check_cascades_completed_within_60s(
-        in_flight_signal_ids, restarted_at_unix
+        in_flight_signal_ids, restarted_at_unix, env=child_env
     )
     drill = RestartDrillResult(
         restart_at_unix=boot_unix + restart_at_s,
@@ -188,7 +188,7 @@ async def _run(
     with contextlib.suppress(asyncio.CancelledError, Exception):
         await liveness_task
 
-    signals, stages = _read_signals_stages_from_db()
+    signals, stages = _read_signals_stages_from_db(env=child_env)
     fixture = _load_fixture(fixtures_path)
     liveness_records = _read_liveness_records(output_dir)
 
@@ -211,21 +211,87 @@ async def _run(
     return 0 if report.passed else 1
 
 
-def _read_in_flight_signals_from_db() -> list[str]:
-    """Stub for Task 15: Task 17 replaces this with a real asyncpg query."""
-    return []
+def _read_in_flight_signals_from_db(env: dict[str, str]) -> list[str]:
+    """Query the configured PG for signals in placed_* states."""
+    dsn = env.get("DATABASE_URL", "")
+    if not dsn:
+        return []
+    return asyncio.run(_async_read_in_flight(dsn))
+
+
+async def _async_read_in_flight(dsn: str) -> list[str]:
+    import asyncpg  # type: ignore[import-untyped]
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT signal_id FROM signals "
+            "WHERE status IN ('placed_initial','placed_gale1','placed_gale2')"
+        )
+        return [r["signal_id"] for r in rows]
+    finally:
+        await conn.close()
 
 
 def _check_cascades_completed_within_60s(
-    in_flight_signal_ids: list[str], restarted_at_unix: float
+    in_flight_signal_ids: list[str], restarted_at_unix: float, env: dict[str, str]
 ) -> dict[str, bool]:
-    """Stub for Task 15: Task 17 replaces this with a real asyncpg query."""
-    return {sid: True for sid in in_flight_signal_ids}
+    if not in_flight_signal_ids:
+        return {}
+    dsn = env.get("DATABASE_URL", "")
+    if not dsn:
+        return {sid: False for sid in in_flight_signal_ids}
+    return asyncio.run(_async_check_completion(dsn, in_flight_signal_ids, restarted_at_unix))
 
 
-def _read_signals_stages_from_db() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Stub for Task 15: Task 17 replaces this with a real asyncpg query."""
-    return [], []
+async def _async_check_completion(
+    dsn: str, signal_ids: list[str], restarted_at_unix: float
+) -> dict[str, bool]:
+    import asyncpg  # type: ignore[import-untyped]
+
+    deadline = restarted_at_unix + 60.0
+    result: dict[str, bool] = {}
+    conn = await asyncpg.connect(dsn)
+    try:
+        for sid in signal_ids:
+            terminal = False
+            while time.time() < deadline:
+                row = await conn.fetchrow(
+                    "SELECT status, updated_at_unix FROM signals WHERE signal_id = $1",
+                    sid,
+                )
+                if row is None:
+                    terminal = True
+                    break
+                if row["status"] in {"done_win", "done_loss", "done_tie", "error"}:
+                    terminal = True
+                    break
+                await asyncio.sleep(1)
+            result[sid] = terminal
+    finally:
+        await conn.close()
+    return result
+
+
+def _read_signals_stages_from_db(
+    env: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:  # noqa: E501
+    dsn = env.get("DATABASE_URL", "")
+    if not dsn:
+        return [], []
+    return asyncio.run(_async_read_signals_stages(dsn))
+
+
+async def _async_read_signals_stages(dsn: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    import asyncpg  # type: ignore[import-untyped]
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        signal_rows = await conn.fetch("SELECT * FROM signals")
+        stage_rows = await conn.fetch("SELECT * FROM stages")
+        return ([dict(r) for r in signal_rows], [dict(r) for r in stage_rows])
+    finally:
+        await conn.close()
 
 
 def _load_fixture(path: Path) -> list[dict[str, Any]]:
