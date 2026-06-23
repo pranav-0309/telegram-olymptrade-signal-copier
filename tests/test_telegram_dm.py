@@ -119,9 +119,7 @@ async def test_bot_started() -> None:
     notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
     await notifier.on_bot_started(mode="dry_run", watching="@analyst", timezone="America/Sao_Paulo")
     assert len(fake.sent) == 1
-    expected = (
-        "🟢 Bot started\n" "Mode: dry_run\n" "Watching: @analyst\n" "Timezone: America/Sao_Paulo"
-    )
+    expected = "🟢 Bot started\nMode: dry_run\nWatching: @analyst\nTimezone: America/Sao_Paulo"
     assert fake.sent[0] == expected
 
 
@@ -406,7 +404,7 @@ async def test_cascade_complete() -> None:
     )
     # Duration is "XmYYs" — assert prefix and suffix
     assert fake.sent[0].startswith(
-        "🏁 Cascade complete: done_win\n" "Signal ID: sig-abc\n" "Total PnL: $+1.84\n" "Duration: "
+        "🏁 Cascade complete: done_win\nSignal ID: sig-abc\nTotal PnL: $+1.84\nDuration: "
     )
     assert fake.sent[0].endswith("s")
 
@@ -494,9 +492,7 @@ async def test_parse_failure() -> None:
     await notifier.on_parse_failure(raw_text=raw, reason=FailureReason.MISSING_SIGNAL_LINE)
     # Preview is the first 80 chars.
     assert fake.sent[0] == (
-        "⚠️ Skipped message (not a valid signal)\n"
-        "Reason: missing_signal_line\n"
-        f"Preview: {raw[:80]}"
+        f"⚠️ Skipped message (not a valid signal)\nReason: missing_signal_line\nPreview: {raw[:80]}"
     )
 
 

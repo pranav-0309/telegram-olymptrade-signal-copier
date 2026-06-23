@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from signal_copier import recovery
 from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
-from signal_copier.broker.olymp import OlympTradeBroker
+from signal_copier.broker.reconnect import ReconnectingOlympTradeBroker
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
@@ -74,14 +74,14 @@ async def _run(config: Config) -> int:
             _log.info("Broker: DryRunBroker (DRY_RUN=true)")
             await broker.connect()
         else:
-            broker = OlympTradeBroker(
+            broker = ReconnectingOlympTradeBroker(
                 access_token=config.olymp_access_token,
                 account_id=config.olymp_account_id,
                 account_group=config.olymp_account_group,
                 notifier=notifier,
             )
             _log.info(
-                "Broker: OlympTradeBroker (live %s, account_id=%s)",
+                "Broker: ReconnectingOlympTradeBroker (live %s, account_id=%s)",
                 config.olymp_account_group,
                 config.olymp_account_id,
             )

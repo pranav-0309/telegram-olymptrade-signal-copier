@@ -335,7 +335,7 @@ async def test_main_picks_dry_run_broker_when_dry_run_true(
 async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DRY_RUN=false + OLYMP_ACCESS_TOKEN set → OlympTradeBroker constructed."""
+    """DRY_RUN=false + OLYMP_ACCESS_TOKEN set → ReconnectingOlympTradeBroker constructed."""
     monkeypatch.setenv("TELEGRAM_API_ID", "12345")
     monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
     monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
@@ -370,7 +370,9 @@ async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
     with (
         patch.object(__main__, "Database") as MockDatabase,
         patch.object(__main__, "TelegramClient") as MockTelegramClient,
-        patch.object(__main__, "OlympTradeBroker", return_value=fake_olymp_broker) as MockOlymp,
+        patch.object(
+            __main__, "ReconnectingOlympTradeBroker", return_value=fake_olymp_broker
+        ) as MockOlymp,
         patch.object(__main__, "Scheduler", return_value=fake_scheduler),
     ):
         MockDatabase.connect = AsyncMock(return_value=fake_db)
@@ -379,7 +381,7 @@ async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
         with contextlib.suppress(TimeoutError, asyncio.CancelledError):
             await asyncio.wait_for(__main__._run(Config()), timeout=1.0)
 
-        # OlympTradeBroker was constructed with the token
+        # ReconnectingOlympTradeBroker was constructed with the token
         assert MockOlymp.called
         call_kwargs = MockOlymp.call_args.kwargs
         assert call_kwargs["access_token"] == "valid-token"
@@ -445,7 +447,7 @@ async def test_main_returns_2_when_olymp_broker_auth_error(
     with (
         patch.object(__main__, "Database") as MockDatabase,
         patch.object(__main__, "TelegramClient") as MockTelegramClient,
-        patch.object(__main__, "OlympTradeBroker", return_value=fake_olymp_broker),
+        patch.object(__main__, "ReconnectingOlympTradeBroker", return_value=fake_olymp_broker),
     ):
         MockDatabase.connect = AsyncMock(return_value=fake_db)
         MockTelegramClient.return_value = fake_tg
