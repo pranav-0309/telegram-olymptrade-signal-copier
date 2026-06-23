@@ -7,6 +7,7 @@ import sys
 
 from pydantic import ValidationError
 
+from signal_copier import recovery
 from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
 from signal_copier.broker.olymp import OlympTradeBroker
@@ -106,6 +107,20 @@ async def _run(config: Config) -> int:
             state_store=db.state_store,
             notifier=notifier,
             config=config,
+        )
+
+        # M9: rehydrate in-progress cascades from DB before starting the
+        # scheduler. Recovery runs ONCE at boot, before the listener starts.
+        recovery_report = await recovery.recover_active_signals(
+            state_store=db.state_store,
+            broker=broker,
+            scheduler=scheduler,
+        )
+        _log.info(
+            "Recovery: rehydrated=%d timed_out=%d abandoned=%d",
+            recovery_report.rehydrated,
+            recovery_report.timed_out,
+            recovery_report.abandoned,
         )
 
         await notifier.on_bot_started(

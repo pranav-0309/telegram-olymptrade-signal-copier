@@ -113,6 +113,7 @@ async def test_main_no_dump_consumer_in_m6(
 
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
@@ -165,6 +166,7 @@ async def test_main_creates_scheduler_task(
 
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
@@ -228,6 +230,7 @@ async def test_main_emits_bot_started_and_stopping(
     fake_notifier = RecordingNotifier()
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
@@ -299,6 +302,7 @@ async def test_main_picks_dry_run_broker_when_dry_run_true(
 
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
@@ -348,6 +352,7 @@ async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
 
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
@@ -425,6 +430,7 @@ async def test_main_returns_2_when_olymp_broker_auth_error(
 
     fake_db = MagicMock()
     fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
     fake_db.close = AsyncMock()
     fake_tg = MagicMock()
     fake_tg.target_chat_id = -100
