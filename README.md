@@ -211,6 +211,82 @@ Edit env vars (any of):
 
 `0` (default) = disabled. Restart the service to pick up new values.
 
+## Verify the deployment
+
+Run these three checks once after the first deploy. Each takes ~30 seconds. If any fails, see the Troubleshooting table below.
+
+### 1. Confirm the bot is connected and listening
+
+```bash
+railway logs --tail | grep "Bot started"
+```
+
+You should see one line:
+
+```
+2026-06-23 14:00:00 | INFO  | signal_copier: Bot started. Mode=dry_run, watching=@analyst_channel
+```
+
+If you don't see this within 2 minutes of the last deploy, something is wrong — see Troubleshooting.
+
+### 2. Confirm restart-on-crash works
+
+```bash
+# Controlled restart (not a crash, but exercises the same restart path)
+railway restart
+```
+
+You should see, in `railway logs --tail`:
+
+- The process exiting (`SIGTERM received`)
+- A new process starting within ~10s
+- `Bot started` again with a fresh PID
+- No "Token expired" or "Postgres connection lost" errors
+
+A "real" crash (OOM, panic, segfault) is exercised by Railway's auto-restart policy on its own — you don't need to test it manually. The Railway dashboard → service → "Restart" button uses the same path.
+
+### 3. Confirm data survives redeploys
+
+In Railway Postgres Data tab → query editor, insert a test row:
+
+```sql
+INSERT INTO signals (signal_id, pair, direction, trigger_hhmm, trigger_ts_unix,
+  expiration_seconds, received_at_unix, status, created_at_unix, updated_at_unix)
+VALUES ('test-deploy-001', 'EUR/JPY', 'up', '12:00', EXTRACT(EPOCH FROM NOW()),
+  300, EXTRACT(EPOCH FROM NOW()), 'pending', EXTRACT(EPOCH FROM NOW()),
+  EXTRACT(EPOCH FROM NOW()));
+```
+
+Then trigger a redeploy:
+
+```bash
+git commit --allow-empty -m "verify deploy"
+git push origin main
+```
+
+After the new deploy finishes (~1 minute), query again:
+
+```sql
+SELECT signal_id, status FROM signals WHERE signal_id = 'test-deploy-001';
+```
+
+You should see `test-deploy-001` still there with `status='pending'`. Clean it up:
+
+```sql
+DELETE FROM signals WHERE signal_id = 'test-deploy-001';
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `Bot started` doesn't appear in logs | Telegram session invalid; or API_ID/API_HASH wrong | Re-run `python -m signal_copier.telegram.auth`; paste new session string |
+| `Database connection failed` in logs | `DATABASE_URL` not set on the service | Check Variables tab; the Postgres service should auto-inject it via `${{Postgres.DATABASE_URL}}` |
+| `OLYMP_ACCOUNT_GROUP=real + DRY_RUN=false → refusing to start` | You tried to enable real-money | Set `OLYMP_ACCOUNT_GROUP=demo` AND `DRY_RUN=true` (per PRD §4.6 FR-6.6) |
+| Bot DMs "Asset map empty — no instruments" | OlympTrade token expired or rejected | Extract new JWT from browser; paste into `OLYMP_ACCESS_TOKEN` |
+| Restart loop (deploy → crash → restart → crash) | Usually a misconfigured env var | Check the deploy logs in Railway; look for the line just before the crash |
+| `FloodWaitError: 3600` in Telegram listener | Personal account being rate-limited | Halve the signal channel's traffic; the bot is a member, not a poster |
+
 ## ⚠️ Risks
 
 - **Telegram ToS:** uses a personal user account, not a bot. Ban risk is real and accepted by the owner.
