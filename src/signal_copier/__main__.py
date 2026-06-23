@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import sys
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -35,6 +37,7 @@ async def _run(config: Config) -> int:
     scheduler: Scheduler | None = None
     scheduler_task: asyncio.Task[None] | None = None
     telegram_task: asyncio.Task[None] | None = None
+    replay_task: asyncio.Task[None] | None = None
     notifier: Notifier = NoOpNotifier()
     broker: Broker | None = None
     try:
@@ -98,6 +101,23 @@ async def _run(config: Config) -> int:
         tg.add_message_handler(listener.on_new_message)
         tg.add_message_handler(listener.on_message_edited)
 
+        # M9: opt-in fixture-driven signal injector for the soak. Gated by
+        # SOAK_REPLAY env var; production never sets this.
+        if "SOAK_REPLAY" in os.environ:
+            from signal_copier import replay
+
+            replay_task = asyncio.create_task(
+                replay.replay_runner(
+                    fixture_path=Path(os.environ["SOAK_REPLAY"]),
+                    target_chat_id=tg.target_chat_id,
+                    listener_callback=listener._process_message,
+                ),
+                name="replay-runner",
+            )
+            _log.info("Replay injector: ACTIVE (SOAK_REPLAY=%s)", os.environ["SOAK_REPLAY"])
+        else:
+            replay_task = None
+
         # M6: Scheduler replaces the M5 dump_consumer. The Scheduler pulls
         # signals from the same queue and spawns a SignalSupervisor per
         # signal. The DryRunBroker (M3) handles place/wait_result calls.
@@ -151,7 +171,7 @@ async def _run(config: Config) -> int:
                 raise exc
         return 0
     finally:
-        for bg_task in (scheduler_task, telegram_task):
+        for bg_task in (scheduler_task, telegram_task, replay_task):
             if bg_task is not None:
                 if not bg_task.done():
                     bg_task.cancel()
