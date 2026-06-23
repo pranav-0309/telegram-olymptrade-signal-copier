@@ -24,7 +24,14 @@ from tests._scheduler_fixtures import RecordingNotifier
 def test_recording_notifier_satisfies_protocol_after_m7() -> None:
     """RecordingNotifier must define the 3 methods M7 added to the Notifier
     Protocol: on_parse_failure, on_telegram_disconnect, on_olymp_disconnect."""
-    expected = ("on_parse_failure", "on_telegram_disconnect", "on_olymp_disconnect")
+    expected = (
+        "on_parse_failure",
+        "on_telegram_disconnect",
+        "on_olymp_disconnect",
+        "on_olymp_reconnecting",
+        "on_olymp_reconnected",
+        "on_olymp_reconnect_failed",
+    )
     missing = [m for m in expected if m not in vars(RecordingNotifier)]
     assert not missing, (
         f"RecordingNotifier no longer satisfies Notifier Protocol — " f"missing methods: {missing}"

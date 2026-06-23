@@ -227,6 +227,46 @@ class RecordingNotifier(Notifier):
     async def on_olymp_disconnect(self) -> None:
         await self._record("on_olymp_disconnect")
 
+    async def on_olymp_reconnecting(
+        self,
+        *,
+        attempt: int,
+        max_attempts: int,
+        downtime_seconds: float,
+        next_delay_seconds: float,
+    ) -> None:
+        await self._record(
+            "on_olymp_reconnecting",
+            attempt=attempt,
+            max_attempts=max_attempts,
+            downtime_seconds=downtime_seconds,
+            next_delay_seconds=next_delay_seconds,
+        )
+
+    async def on_olymp_reconnected(
+        self,
+        *,
+        attempts_used: int,
+        total_downtime_seconds: float,
+    ) -> None:
+        await self._record(
+            "on_olymp_reconnected",
+            attempts_used=attempts_used,
+            total_downtime_seconds=total_downtime_seconds,
+        )
+
+    async def on_olymp_reconnect_failed(
+        self,
+        *,
+        attempts: int,
+        total_downtime_seconds: float,
+    ) -> None:
+        await self._record(
+            "on_olymp_reconnect_failed",
+            attempts=attempts,
+            total_downtime_seconds=total_downtime_seconds,
+        )
+
 
 def make_signal_with_future_trigger(
     *,

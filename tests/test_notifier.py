@@ -192,3 +192,54 @@ async def test_noop_notifier_logs_olymp_disconnect_at_warning(
     assert caplog.records[0].levelno == logging.WARNING
     msg = caplog.records[0].getMessage()
     assert "event=olymp_disconnect" in msg
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_olymp_reconnecting_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_olymp_reconnecting(
+            attempt=1,
+            max_attempts=5,
+            downtime_seconds=3.0,
+            next_delay_seconds=1.0,
+        )
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    msg = caplog.records[0].getMessage()
+    assert "event=olymp_reconnecting" in msg
+    assert "attempt=1/5" in msg
+    assert "downtime=3.0s" in msg
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_olymp_reconnected_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_olymp_reconnected(
+            attempts_used=1,
+            total_downtime_seconds=12.3,
+        )
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    msg = caplog.records[0].getMessage()
+    assert "event=olymp_reconnected" in msg
+    assert "attempts_used=1" in msg
+
+
+@pytest.mark.asyncio
+async def test_noop_notifier_logs_olymp_reconnect_failed_at_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """reconnect_failed is the terminal halt — log at ERROR (vs WARNING)."""
+    with caplog.at_level(logging.ERROR, logger="signal_copier.notify.protocol"):
+        await NoOpNotifier().on_olymp_reconnect_failed(
+            attempts=5,
+            total_downtime_seconds=67.8,
+        )
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.ERROR
+    msg = caplog.records[0].getMessage()
+    assert "event=olymp_reconnect_failed" in msg
