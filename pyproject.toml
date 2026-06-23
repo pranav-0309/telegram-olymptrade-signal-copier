@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Telegram → OlympTrade signal copier (demo only, v1)"
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "Proprietary" }
+license = { text = "PolyForm Strict 1.0.0" }
 authors = [{ name = "Owner" }]
 dependencies = [
     "pydantic-settings>=2.6",  # M2: config layer
