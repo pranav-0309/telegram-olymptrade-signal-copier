@@ -174,3 +174,53 @@ def test_main_refuses_to_run_on_railway(
     err = capsys.readouterr().err
     assert "locally" in err.lower()
     assert "railway" in err.lower()
+
+
+def test_main_verifies_session_and_prints_rich_banner(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Per spec §5.3 step 7 + step 9: the helper must verify the session
+    via get_me() and print a rich banner with user info + security warning.
+    The combined _do_auth_and_verify coroutine returns (session_str, user).
+    """
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc123")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+15551234567")
+    for key in [
+        "TELEGRAM_SESSION_STRING",
+        "TELEGRAM_TARGET_CHAT",
+        "DATABASE_URL",
+        "OLYMP_ACCESS_TOKEN",
+        "OLYMP_ACCOUNT_ID",
+        "OLYMP_ACCOUNT_GROUP",
+        "RAILWAY_ENVIRONMENT",
+        "RAILWAY_PROJECT_ID",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    SESSION = "AAAAfakebase64session=="
+    fake_user = type(
+        "User",
+        (),
+        {
+            "first_name": "Alice",
+            "last_name": "Tester",
+            "username": "alicehandle",
+            "id": 987654321,
+        },
+    )()
+
+    async def _success_auth_and_verify(*args: object, **kwargs: object) -> tuple[str, object]:
+        return SESSION, fake_user
+
+    with patch.object(auth, "_do_auth_and_verify", side_effect=_success_auth_and_verify):
+        rc = auth.main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Alice Tester" in out
+    assert "@alicehandle" in out
+    assert "987654321" in out
+    assert f"TELEGRAM_SESSION_STRING={SESSION}" in out
+    assert "Treat the session string like a password" in out
