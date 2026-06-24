@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg
 import asyncpg.exceptions
@@ -16,6 +17,9 @@ from signal_copier.infra.db_rows import (
     row_to_signal_row,
     row_to_stage_row,
 )
+
+if TYPE_CHECKING:
+    from signal_copier.infra.db import Database
 
 
 def _record(**fields: Any) -> Any:
@@ -168,7 +172,7 @@ import pytest  # noqa: E402
 from signal_copier.infra.db import Database, DatabaseConnectionError  # noqa: E402
 
 
-async def test_migrations_create_expected_tables(db) -> None:
+async def test_migrations_create_expected_tables(db: Database) -> None:
     async with db.pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT table_name FROM information_schema.tables "
@@ -178,7 +182,7 @@ async def test_migrations_create_expected_tables(db) -> None:
     assert table_names == {"signals", "stages", "daily_summary"}
 
 
-async def test_migrations_create_expected_indexes(db) -> None:
+async def test_migrations_create_expected_indexes(db: Database) -> None:
     async with db.pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' ORDER BY indexname"
@@ -193,7 +197,7 @@ async def test_migrations_create_expected_indexes(db) -> None:
     }
 
 
-async def test_migrations_are_idempotent(pg_dsn) -> None:
+async def test_migrations_are_idempotent(pg_dsn: str) -> None:
     # Second connect on the same DSN must succeed (CREATE TABLE IF NOT EXISTS).
     db1 = await Database.connect(pg_dsn)
     try:
@@ -266,13 +270,13 @@ def _make_signal(
     )
 
 
-async def test_upsert_signal_inserts_new_returns_true(db) -> None:
+async def test_upsert_signal_inserts_new_returns_true(db: Database) -> None:
     signal = _make_signal()
     inserted = await db.state_store.upsert_signal(signal)
     assert inserted is True
 
 
-async def test_upsert_signal_duplicate_returns_false(db) -> None:
+async def test_upsert_signal_duplicate_returns_false(db: Database) -> None:
     signal = _make_signal()
     first = await db.state_store.upsert_signal(signal)
     second = await db.state_store.upsert_signal(signal)
@@ -280,11 +284,11 @@ async def test_upsert_signal_duplicate_returns_false(db) -> None:
     assert second is False
 
 
-async def test_get_signal_returns_none_for_missing(db) -> None:
+async def test_get_signal_returns_none_for_missing(db: Database) -> None:
     assert await db.state_store.get_signal("nonexistent") is None
 
 
-async def test_get_signal_round_trip(db) -> None:
+async def test_get_signal_round_trip(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
     row = await db.state_store.get_signal(signal.signal_id)
@@ -299,7 +303,7 @@ async def test_get_signal_round_trip(db) -> None:
     assert row.source_message_id == 42
 
 
-async def test_update_signal_state_round_trip(db) -> None:
+async def test_update_signal_state_round_trip(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
     # pending → placed_initial
@@ -323,7 +327,7 @@ async def test_update_signal_state_round_trip(db) -> None:
     assert row.status == "done_win"
 
 
-async def test_update_signal_state_with_error_reason(db) -> None:
+async def test_update_signal_state_with_error_reason(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
     await db.state_store.update_signal_state(
@@ -338,9 +342,9 @@ async def test_update_signal_state_with_error_reason(db) -> None:
     assert row.error_reason == "signal_expired"
 
 
-async def test_update_signal_state_warns_on_missing_signal_id(db, caplog) -> None:
-    import logging
-
+async def test_update_signal_state_warns_on_missing_signal_id(
+    db: Database, caplog: pytest.LogCaptureFixture
+) -> None:
     with caplog.at_level(logging.WARNING):
         await db.state_store.update_signal_state(
             "nonexistent-id",
@@ -355,7 +359,7 @@ from decimal import Decimal as _D  # noqa: E402
 from signal_copier.infra.state_store import StageAlreadyExistsError, StateStore  # noqa: E402
 
 
-async def test_record_stage_placed_returns_deterministic_trade_id(db) -> None:
+async def test_record_stage_placed_returns_deterministic_trade_id(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
     tid1 = await db.state_store.record_stage_placed(
@@ -373,7 +377,7 @@ async def test_record_stage_placed_returns_deterministic_trade_id(db) -> None:
     assert len(tid1) == 16
 
 
-async def test_record_stage_placed_inserts_row_with_all_fields(db) -> None:
+async def test_record_stage_placed_inserts_row_with_all_fields(db: Database) -> None:
     from signal_copier.infra.db_rows import StageRow
 
     signal = _make_signal()
@@ -412,7 +416,7 @@ async def test_record_stage_placed_inserts_row_with_all_fields(db) -> None:
     )
 
 
-async def test_record_stage_placed_raises_on_duplicate(db) -> None:
+async def test_record_stage_placed_raises_on_duplicate(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
     kwargs = dict(
@@ -435,7 +439,7 @@ async def test_record_stage_placed_raises_on_duplicate(db) -> None:
         )
 
 
-async def test_record_stage_result_updates_row(db) -> None:
+async def test_record_stage_result_updates_row(db: Database) -> None:
     from signal_copier.infra.db_rows import row_to_stage_row
 
     signal = _make_signal()
@@ -467,9 +471,9 @@ async def test_record_stage_result_updates_row(db) -> None:
     assert row.closed_at_unix == 400.0
 
 
-async def test_record_stage_result_warns_on_missing_trade_id(db, caplog) -> None:
-    import logging
-
+async def test_record_stage_result_warns_on_missing_trade_id(
+    db: Database, caplog: pytest.LogCaptureFixture
+) -> None:
     with caplog.at_level(logging.WARNING):
         await db.state_store.record_stage_result(
             "nonexistent-trade-id",
@@ -480,7 +484,7 @@ async def test_record_stage_result_warns_on_missing_trade_id(db, caplog) -> None
     assert any("no row" in r.message for r in caplog.records)
 
 
-async def test_get_active_signals_excludes_terminal_states(db) -> None:
+async def test_get_active_signals_excludes_terminal_states(db: Database) -> None:
     for status in ("placed_initial", "done_win", "error"):
         sig = _make_signal(trigger_hhmm=status)
         await db.state_store.upsert_signal(sig)
@@ -495,7 +499,7 @@ async def test_get_active_signals_excludes_terminal_states(db) -> None:
     assert active[0].status == "placed_initial"
 
 
-async def test_update_daily_summary_inserts_new_row(db) -> None:
+async def test_update_daily_summary_inserts_new_row(db: Database) -> None:
     today = _date.today()
     await db.state_store.update_daily_summary(
         today,
@@ -515,7 +519,7 @@ async def test_update_daily_summary_inserts_new_row(db) -> None:
     assert row.limit_hit is None
 
 
-async def test_update_daily_summary_adds_deltas(db) -> None:
+async def test_update_daily_summary_adds_deltas(db: Database) -> None:
     today = _date.today()
     await db.state_store.update_daily_summary(today, wins_delta=1)
     await db.state_store.update_daily_summary(today, wins_delta=1)
@@ -524,7 +528,7 @@ async def test_update_daily_summary_adds_deltas(db) -> None:
     assert row.wins == 2
 
 
-async def test_update_daily_summary_preserves_limit_hit(db) -> None:
+async def test_update_daily_summary_preserves_limit_hit(db: Database) -> None:
     today = _date.today()
     await db.state_store.update_daily_summary(today, limit_hit="loss")
     await db.state_store.update_daily_summary(today, wins_delta=1)
@@ -534,7 +538,7 @@ async def test_update_daily_summary_preserves_limit_hit(db) -> None:
     assert row.wins == 1
 
 
-async def test_update_daily_summary_concurrent(db) -> None:
+async def test_update_daily_summary_concurrent(db: Database) -> None:
     import asyncio
 
     today = _date.today()
@@ -546,11 +550,11 @@ async def test_update_daily_summary_concurrent(db) -> None:
     assert row.signals_count == 10
 
 
-async def test_get_daily_summary_returns_none_for_missing(db) -> None:
+async def test_get_daily_summary_returns_none_for_missing(db: Database) -> None:
     assert await db.state_store.get_daily_summary(_date(2020, 1, 1)) is None
 
 
-async def test_command_timeout_aborts_long_query(db) -> None:
+async def test_command_timeout_aborts_long_query(db: Database) -> None:
     # Use a fresh connection with a tight statement_timeout. SET LOCAL only
     # takes effect within a transaction, so we open one explicitly.
     async with db.pool.acquire() as conn:
@@ -560,7 +564,7 @@ async def test_command_timeout_aborts_long_query(db) -> None:
                 await conn.fetch("SELECT pg_sleep(2)")
 
 
-async def test_pool_reconnect_after_backend_terminated(db) -> None:
+async def test_pool_reconnect_after_backend_terminated(db: Database) -> None:
     # Acquire a connection, ask PG to kill it, release, then verify the
     # next acquire returns a working connection within 5 seconds.
     conn = await db.pool.acquire()

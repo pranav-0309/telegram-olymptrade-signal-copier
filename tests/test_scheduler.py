@@ -17,7 +17,8 @@ from typing import Any
 import pytest
 
 from signal_copier.config import Config
-from signal_copier.scheduler.trigger import Scheduler, compute_target_monotonic
+from signal_copier.domain.signal import Signal
+from signal_copier.scheduler.trigger import Scheduler, SignalSupervisor, compute_target_monotonic
 from tests._scheduler_fixtures import (
     FakeBroker,
     FakeStateStore,
@@ -217,7 +218,7 @@ def _make_supervisor(
     trigger_in_seconds: float = 0.05,
     signal_id: str = "test-sig-1",
     expiration_seconds: int = 300,
-):
+) -> tuple[SignalSupervisor, Signal, FakeBroker, RecordingNotifier]:
     """Build a SignalSupervisor ready to run. We DON'T run the scheduler;
     we run the supervisor directly via `await supervisor.run()`."""
     from signal_copier.scheduler.trigger import SignalSupervisor

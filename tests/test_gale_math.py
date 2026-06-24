@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -8,7 +9,7 @@ from signal_copier.config import Config
 from signal_copier.domain.gale import amount_for_stage, compute_gale_triggers
 
 
-def _config(**overrides) -> Config:
+def _config(**overrides: Any) -> Config:
     return Config(_env_file=None, **overrides)
 
 
@@ -44,7 +45,9 @@ def test_amount_for_stage_returns_decimal_not_float() -> None:
         (Decimal("5.50"), Decimal("11.00"), Decimal("22.00")),  # arbitrary
     ],
 )
-def test_amount_for_stage_reads_from_config(initial, gale1, gale2) -> None:
+def test_amount_for_stage_reads_from_config(
+    initial: Decimal, gale1: Decimal, gale2: Decimal
+) -> None:
     cfg = _config(amount_initial=initial, amount_gale1=gale1, amount_gale2=gale2)
     assert amount_for_stage("initial", cfg) == initial
     assert amount_for_stage("gale1", cfg) == gale1

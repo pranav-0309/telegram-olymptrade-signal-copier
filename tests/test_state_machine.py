@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -20,14 +21,14 @@ GALE1_UNIX = INITIAL_UNIX + 300.0
 GALE2_UNIX = INITIAL_UNIX + 600.0
 
 
-def _config(**overrides) -> Config:
+def _config(**overrides: Any) -> Config:
     return Config(
         _env_file=None,
         **overrides,
     )
 
 
-def _signal(**overrides) -> Signal:
+def _signal(**overrides: Any) -> Signal:
     defaults = dict(
         signal_id="test-sig-001",
         pair="EUR/JPY",
@@ -46,7 +47,7 @@ def _signal(**overrides) -> Signal:
     return Signal(**defaults)
 
 
-def _initial_state(**overrides) -> SignalState:
+def _initial_state(**overrides: Any) -> SignalState:
     return SignalState.from_signal(_signal(**overrides), _config())
 
 

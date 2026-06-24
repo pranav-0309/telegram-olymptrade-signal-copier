@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -8,7 +9,7 @@ from pydantic import ValidationError
 from signal_copier.config import Config
 
 
-def _config(**overrides) -> Config:
+def _config(**overrides: Any) -> Config:
     return Config(_env_file=None, **overrides)
 
 
