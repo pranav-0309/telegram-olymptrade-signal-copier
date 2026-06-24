@@ -5,7 +5,7 @@ import re
 from importlib.resources import files
 from typing import Final
 
-import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
+import asyncpg  # asyncpg ships no type stubs (pyproject.toml override covers this)
 
 from signal_copier.infra.state_store import StateStore
 

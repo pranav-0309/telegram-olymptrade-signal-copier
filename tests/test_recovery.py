@@ -25,7 +25,7 @@ class RecordingScheduler:
         self.adopted: list[tuple[str, str]] = []  # (signal_id, status)
         self.timed_out: list[tuple[str, str]] = []  # (signal_id, stage)
 
-    async def adopt(self, signal_row: object) -> None:
+    async def adopt(self, signal_row: SignalRow) -> None:
         # signal_row is signal_copier.infra.db_rows.SignalRow
         # recovery passes the row through; we just record its id + status.
         self.adopted.append((signal_row.signal_id, signal_row.status))

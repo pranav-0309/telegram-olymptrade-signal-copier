@@ -22,10 +22,13 @@ GALE2_UNIX = INITIAL_UNIX + 600.0
 
 
 def _config(**overrides: Any) -> Config:
-    return Config(
-        _env_file=None,
+    # `_env_file=None` is a Pydantic private API used to skip .env loading in tests.
+    # The cast on init_kwargs keeps mypy strict-mode happy without changing runtime behavior.
+    init_kwargs: Any = {
+        "_env_file": None,
         **overrides,
-    )
+    }
+    return Config(**init_kwargs)
 
 
 def _signal(**overrides: Any) -> Signal:
@@ -89,6 +92,7 @@ def test_pending_with_fire_event_within_tolerance_window_moves_to_placed_initial
     state = _initial_state()
     result = transition(state, FireEvent(now_unix=INITIAL_UNIX + 1.5), config=_config())
     assert result.success is True
+    assert result.new_state is not None
     assert result.new_state.state == "placed_initial"
 
 
@@ -96,6 +100,7 @@ def test_pending_with_fire_event_at_tolerance_boundary_succeeds() -> None:
     state = _initial_state()
     result = transition(state, FireEvent(now_unix=INITIAL_UNIX + 2.0), config=_config())
     assert result.success is True
+    assert result.new_state is not None
     assert result.new_state.state == "placed_initial"
 
 
@@ -106,6 +111,7 @@ def test_pending_with_fire_event_past_tolerance_ends_cascade_with_error() -> Non
     state = _initial_state()
     result = transition(state, FireEvent(now_unix=INITIAL_UNIX + 3.0), config=_config())
     assert result.success is True
+    assert result.new_state is not None
     assert result.new_state.state == "error"
     assert result.new_state.error_reason == "signal_expired"
 
@@ -114,6 +120,7 @@ def test_pending_with_fire_event_far_past_trigger_ends_cascade_with_error() -> N
     state = _initial_state()
     result = transition(state, FireEvent(now_unix=INITIAL_UNIX + 3600), config=_config())
     assert result.success is True
+    assert result.new_state is not None
     assert result.new_state.state == "error"
     assert result.new_state.error_reason == "signal_expired"
 
@@ -123,6 +130,7 @@ def test_pre_fire_guard_uses_config_tolerance() -> None:
     cfg = _config(trigger_skew_tolerance_seconds=10.0)
     result = transition(state, FireEvent(now_unix=INITIAL_UNIX + 5.0), config=cfg)
     assert result.success is True
+    assert result.new_state is not None
     assert result.new_state.state == "placed_initial"
 
 
@@ -153,6 +161,7 @@ def test_placed_initial_with_win_result_moves_to_done_win() -> None:
         state, ResultEvent(result="win", now_unix=INITIAL_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_win"
     assert result.new_state.stage is None
     assert result.new_state.result == "win"
@@ -165,6 +174,7 @@ def test_placed_initial_with_loss_result_moves_to_placed_gale1() -> None:
         state, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "placed_gale1"
     assert result.new_state.stage == "gale1"
     assert result.new_state.amount == Decimal("4.00")
@@ -179,6 +189,7 @@ def test_placed_initial_with_tie_result_moves_to_placed_gale1() -> None:
         state, ResultEvent(result="tie", now_unix=INITIAL_UNIX + 300), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "placed_gale1"
     assert result.new_state.result == "tie"
 
@@ -190,6 +201,7 @@ def test_placed_initial_with_timeout_result_moves_to_placed_gale1() -> None:
         state, ResultEvent(result="timeout", now_unix=INITIAL_UNIX + 300), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "placed_gale1"
     assert result.new_state.result == "timeout"
 
@@ -200,6 +212,7 @@ def test_placed_initial_with_error_result_moves_to_error_state() -> None:
         state, ResultEvent(result="error", now_unix=INITIAL_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "error"
     assert result.new_state.error_reason == "broker_unavailable"
 
@@ -227,6 +240,7 @@ def test_placed_gale1_with_win_result_moves_to_done_win() -> None:
         state, ResultEvent(result="win", now_unix=GALE1_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_win"
     assert result.new_state.cumulative_pnl == Decimal("1.68")
 
@@ -237,6 +251,7 @@ def test_placed_gale1_with_loss_result_moves_to_placed_gale2() -> None:
         state, ResultEvent(result="loss", now_unix=GALE1_UNIX + 300), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "placed_gale2"
     assert result.new_state.stage == "gale2"
     assert result.new_state.amount == Decimal("8.00")
@@ -250,6 +265,7 @@ def test_placed_gale1_with_tie_result_moves_to_placed_gale2() -> None:
         state, ResultEvent(result="tie", now_unix=GALE1_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "placed_gale2"
 
 
@@ -265,6 +281,7 @@ def test_placed_gale1_with_error_result_moves_to_error_state() -> None:
         state, ResultEvent(result="error", now_unix=GALE1_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.error_reason == "broker_unavailable"
 
 
@@ -284,6 +301,7 @@ def test_placed_gale2_with_win_result_moves_to_done_win() -> None:
         state, ResultEvent(result="win", now_unix=GALE2_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_win"
     assert result.new_state.cumulative_pnl == Decimal("1.36")
 
@@ -294,6 +312,7 @@ def test_placed_gale2_with_loss_result_moves_to_done_loss() -> None:
         state, ResultEvent(result="loss", now_unix=GALE2_UNIX + 300), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_loss"
     assert result.new_state.cumulative_pnl == Decimal("-14.00")
 
@@ -304,6 +323,7 @@ def test_placed_gale2_with_tie_result_moves_to_done_loss() -> None:
         state, ResultEvent(result="tie", now_unix=GALE2_UNIX + 60), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_loss"
 
 
@@ -313,6 +333,7 @@ def test_placed_gale2_with_timeout_result_moves_to_done_loss() -> None:
         state, ResultEvent(result="timeout", now_unix=GALE2_UNIX + 330), config=_config()
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_loss"
 
 
@@ -333,6 +354,7 @@ def test_placed_gale1_with_loss_result_past_gale2_window_ends_cascade() -> None:
         config=_config(),
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "error"
     assert result.new_state.error_reason == "signal_expired"
 
@@ -345,6 +367,7 @@ def test_placed_initial_with_loss_result_past_gale1_window_ends_cascade() -> Non
         config=_config(),
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "error"
     assert result.new_state.error_reason == "signal_expired"
 
@@ -357,6 +380,7 @@ def test_placed_gale2_with_loss_result_at_gale2_window_boundary_succeeds() -> No
         config=_config(),
     )
     assert result.success
+    assert result.new_state is not None
     assert result.new_state.state == "done_loss"
 
 

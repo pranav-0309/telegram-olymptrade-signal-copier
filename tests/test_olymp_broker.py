@@ -8,12 +8,12 @@ from typing import cast
 
 import pytest
 
+from olymptrade_ws import OlympTradeClient
 from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
     OlympTradeBroker,
-    OlympTradeClient,
     _map_status,
     _normalize_key,
 )
@@ -154,8 +154,8 @@ async def test_connect_is_idempotent(notifier: RecordingNotifier) -> None:
     fake_client.start = counting_start  # type: ignore[method-assign]
 
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop
-    broker._cache_start_of_day_balance = _async_noop
+    setattr(broker, "_build_asset_map", _async_noop)  # noqa: B010
+    setattr(broker, "_cache_start_of_day_balance", _async_noop)  # noqa: B010
 
     await broker.connect()
     await broker.connect()
@@ -434,7 +434,7 @@ async def test_on_trade_closed_resolves_pending_future(
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
     broker._connected = True
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
     sig = make_signal()
@@ -459,7 +459,7 @@ async def test_on_trade_closed_caches_when_no_pending(notifier: RecordingNotifie
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
     broker._connected = True
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
     # No place() called — _pending is empty
     await fake_client._deliver_event(
@@ -476,7 +476,7 @@ async def test_on_trade_closed_ignores_empty_d_list(notifier: RecordingNotifier)
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
     broker._connected = True
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
     await fake_client._deliver_event(parameters.E_TRADE_CLOSED, {"d": []})
     # No exception; no state mutation
@@ -489,7 +489,7 @@ async def test_on_trade_closed_ignores_missing_id(notifier: RecordingNotifier) -
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
     broker._connected = True
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
     await fake_client._deliver_event(parameters.E_TRADE_CLOSED, {"d": [{"status": "win"}]})
     assert broker._pending == {}
@@ -504,7 +504,7 @@ async def test_on_trade_closed_ignores_duplicate_delivery(
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
     broker._connected = True
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
     await fake_client._deliver_event(
         parameters.E_TRADE_CLOSED,
@@ -530,7 +530,7 @@ async def test_on_trade_accepted_logs_only(
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_ACCEPTED, broker._on_trade_accepted)
+    fake_client.register_callback(parameters.E_TRADE_ACCEPTED, broker._on_trade_accepted)
     broker._connected = True
 
     with caplog.at_level(logging.INFO):
@@ -551,7 +551,7 @@ async def test_on_trade_interim_logs_only(
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, broker._on_trade_interim)
+    fake_client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, broker._on_trade_interim)
     broker._connected = True
 
     with caplog.at_level(logging.INFO):
@@ -572,7 +572,7 @@ async def test_wait_result_resolves_on_e26_win(notifier: RecordingNotifier) -> N
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -595,7 +595,7 @@ async def test_wait_result_resolves_on_e26_loss(notifier: RecordingNotifier) -> 
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -619,7 +619,7 @@ async def test_wait_result_resolves_on_e26_tie(notifier: RecordingNotifier) -> N
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -645,7 +645,7 @@ async def test_wait_result_resolves_after_e26_already_arrived(
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -753,7 +753,7 @@ async def test_close_cancels_pending_futures(notifier: RecordingNotifier) -> Non
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)
-    broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
+    fake_client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -797,8 +797,8 @@ async def test_connect_registers_three_callbacks(notifier: RecordingNotifier) ->
     """connect() registers e:21/e:22/e:26 callbacks on the vendored client."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop
-    broker._cache_start_of_day_balance = _async_noop
+    setattr(broker, "_build_asset_map", _async_noop)  # noqa: B010
+    setattr(broker, "_cache_start_of_day_balance", _async_noop)  # noqa: B010
 
     await broker.connect()
 
@@ -820,8 +820,8 @@ async def test_connect_calls_initialize_session(notifier: RecordingNotifier) -> 
     """connect() calls initialize_session() on the vendored client."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._build_asset_map = _async_noop
-    broker._cache_start_of_day_balance = _async_noop
+    setattr(broker, "_build_asset_map", _async_noop)  # noqa: B010
+    setattr(broker, "_cache_start_of_day_balance", _async_noop)  # noqa: B010
 
     await broker.connect()
 
@@ -832,8 +832,8 @@ async def test_connect_account_group_mismatch_raises(notifier: RecordingNotifier
     """Broker reports different account_group than configured → BrokerAuthError."""
     fake_client = FakeOlympTradeClient(account_group="real")
     broker = _make_broker(notifier, fake_client=fake_client, account_group="demo")
-    broker._build_asset_map = _async_noop
-    broker._cache_start_of_day_balance = _async_noop
+    setattr(broker, "_build_asset_map", _async_noop)  # noqa: B010
+    setattr(broker, "_cache_start_of_day_balance", _async_noop)  # noqa: B010
 
     with pytest.raises(BrokerAuthError, match="account_group"):
         await broker.connect()

@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-import asyncpg  # type: ignore[import-untyped]  # asyncpg ships no type stubs
+import asyncpg  # asyncpg ships no type stubs (pyproject.toml override covers this)
 
 from signal_copier.domain.gale import Stage
 from signal_copier.domain.signal import Signal

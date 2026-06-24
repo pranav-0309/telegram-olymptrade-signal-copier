@@ -399,7 +399,7 @@ async def test_record_stage_placed_inserts_row_with_all_fields(db: Database) -> 
             tid,
         )
     assert record is not None
-    row = row_to_stage_row(record)  # type: ignore[arg-type]
+    row = row_to_stage_row(record)
     assert row == StageRow(
         trade_id=tid,
         signal_id=signal.signal_id,
@@ -465,7 +465,7 @@ async def test_record_stage_result_updates_row(db: Database) -> None:
             tid,
         )
     assert record is not None
-    row = row_to_stage_row(record)  # type: ignore[arg-type]
+    row = row_to_stage_row(record)
     assert row.result == "win"
     assert row.pnl == _D("1.84")
     assert row.closed_at_unix == 400.0
@@ -490,7 +490,7 @@ async def test_get_active_signals_excludes_terminal_states(db: Database) -> None
         await db.state_store.upsert_signal(sig)
         await db.state_store.update_signal_state(
             sig.signal_id,
-            status,  # type: ignore[arg-type]
+            status,
             error_reason="signal_expired" if status == "error" else None,
             updated_at_unix=1.0,
         )

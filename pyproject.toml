@@ -71,6 +71,19 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# asyncpg and testcontainers don't ship py.typed markers. test_db.py and
+# conftest.py use these for integration tests with real PostgreSQL containers;
+# the codebase wraps them in our own typed Database class, so the lack of
+# upstream stubs doesn't leak into the rest of the codebase.
+module = [
+    "asyncpg",
+    "asyncpg.exceptions",
+    "testcontainers",
+    "testcontainers.postgres",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # Tests use Pydantic private APIs (_env_file), untyped **kwargs helpers, and
 # rely on mypy-not-knowable narrowing (e.g. transition() returning a state the
 # caller then asserts is non-None). Keep src strict; relax tests only.

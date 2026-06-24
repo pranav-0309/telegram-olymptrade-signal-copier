@@ -148,7 +148,7 @@ async def test_send_to_self_calls_send_message_with_me() -> None:
     # Inject a fake underlying Telethon client (bypass real connect()).
     fake_telethon = MagicMock()
     fake_telethon.send_message = AsyncMock()
-    client._client = fake_telethon  # type: ignore[attr-defined]
+    client._client = fake_telethon
 
     await client.send_to_self("hello")
 
@@ -195,13 +195,13 @@ async def test_start_emits_on_telegram_disconnect_on_connection_error(
     async def fake_run() -> None:
         call_count["n"] += 1
         if call_count["n"] >= 2:
-            client._client = None  # type: ignore[attr-defined]  # exit the loop
+            client._client = None  # exit the loop
             return
         raise ConnectionError("simulated disconnect")
 
     fake_telethon.run_until_disconnected = fake_run
     fake_telethon.disconnect = AsyncMock()
-    client._client = fake_telethon  # type: ignore[attr-defined]
+    client._client = fake_telethon
 
     # Patch asyncio.sleep so the test doesn't actually wait.
     sleeps: list[float] = []

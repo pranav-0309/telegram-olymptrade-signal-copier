@@ -87,8 +87,8 @@ class _NoOpStateStore:
         return None
 
 
-def _make_scheduler() -> tuple[Scheduler, asyncio.Queue, FakeBroker, RecordingNotifier]:
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+def _make_scheduler() -> tuple[Scheduler, asyncio.Queue[Signal], FakeBroker, RecordingNotifier]:
+    queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=100)
     broker = FakeBroker()
     notifier = RecordingNotifier()
     state_store = _NoOpStateStore()
@@ -889,7 +889,7 @@ async def test_record_timeout_dispatches_result_event_and_persists() -> None:
         config=config,
     )
 
-    await scheduler.record_timeout("sig-rt-1", "initial")  # type: ignore[arg-type]
+    await scheduler.record_timeout("sig-rt-1", "initial")
 
     assert len(state_store.state_updates) == 1
     update = state_store.state_updates[0]

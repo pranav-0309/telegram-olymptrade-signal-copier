@@ -17,7 +17,8 @@ from typing import cast
 
 import pytest
 
-from signal_copier.broker.olymp import OlympTradeBroker, OlympTradeClient
+from olymptrade_ws import OlympTradeClient
+from signal_copier.broker.olymp import OlympTradeBroker
 from tests._broker_fixtures import FakeOlympTradeClient
 from tests._scheduler_fixtures import RecordingNotifier
 

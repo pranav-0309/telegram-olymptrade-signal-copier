@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from signal_copier.infra.log import setup_logging, setup_parse_failures_log
 
 
 @pytest.fixture(autouse=True)
-def _reset_loguru() -> None:
+def _reset_loguru() -> Generator[None]:
     """Each test starts with a clean loguru state."""
     from loguru import logger as _loguru_logger
 

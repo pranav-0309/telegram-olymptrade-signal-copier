@@ -10,7 +10,10 @@ from signal_copier.config import Config
 
 
 def _config(**overrides: Any) -> Config:
-    return Config(_env_file=None, **overrides)
+    # `_env_file=None` is a Pydantic private API used to skip .env loading in tests.
+    # The cast on init_kwargs keeps mypy strict-mode happy without changing runtime behavior.
+    init_kwargs: Any = {"_env_file": None, **overrides}
+    return Config(**init_kwargs)
 
 
 # --- Defaults -------------------------------------------------------------

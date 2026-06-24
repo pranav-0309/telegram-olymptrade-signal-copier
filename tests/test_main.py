@@ -10,6 +10,7 @@ import pytest
 from signal_copier import __main__ as m5_main
 from signal_copier.broker.base import BrokerAuthError
 from signal_copier.config import Config
+from signal_copier.infra.db import DatabaseConnectionError
 
 
 def test_main_returns_2_on_config_validation_error(
@@ -86,7 +87,7 @@ def test_main_returns_1_on_database_connection_error(
 
     with patch.object(m5_main, "Database") as mock_db_cls:
         mock_db_cls.connect = AsyncMock(
-            side_effect=m5_main.DatabaseConnectionError("simulated"),
+            side_effect=DatabaseConnectionError("simulated"),
         )
         rc = m5_main.main()
 
@@ -177,11 +178,11 @@ async def test_main_creates_scheduler_task(
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 0
 
-    started_tasks: list[asyncio.Task] = []
+    started_tasks: list[asyncio.Task[Any]] = []
 
     real_create_task = asyncio.create_task
 
-    def tracking_create_task(coro: Any, *, name: str | None = None) -> asyncio.Task:
+    def tracking_create_task(coro: Any, *, name: str | None = None) -> asyncio.Task[Any]:
         task = real_create_task(coro, name=name)
         started_tasks.append(task)
         return task

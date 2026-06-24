@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from olymptrade_ws import OlympTradeClient
 from signal_copier.broker.base import Broker, BrokerAuthError
-from signal_copier.broker.olymp import OlympTradeBroker, OlympTradeClient
+from signal_copier.broker.olymp import OlympTradeBroker
 from signal_copier.broker.reconnect import (
     ReconnectingOlympTradeBroker,
     compute_backoff_seconds,
@@ -204,7 +205,9 @@ async def test_event_driven_reconnect(
 
     if trigger_method == "place":
         # Force inner.place_order() to raise ConnectionError on next call.
-        wrapper._inner._client.trade.raise_on_call = ConnectionError("WS down on place")
+        assert wrapper._inner is not None
+        assert wrapper._inner._client is not None
+        cast(Any, wrapper._inner._client.trade).raise_on_call = ConnectionError("WS down on place")
         sig = make_signal()
         with pytest.raises(ConnectionError, match="WS down on place"):
             await wrapper.place(sig, stage="initial", amount=Decimal("2.00"))
@@ -379,7 +382,8 @@ async def test_concurrent_detection_only_one_reconnect_loop(
     # Now also trigger via place() while the watcher is still in flight.
     sig = make_signal()
     assert wrapper._inner is not None
-    wrapper._inner._client.trade.raise_on_call = ConnectionError("WS down")
+    assert wrapper._inner._client is not None
+    cast(Any, wrapper._inner._client.trade).raise_on_call = ConnectionError("WS down")
     with pytest.raises(ConnectionError):
         await wrapper.place(sig, stage="initial", amount=Decimal("2.00"))
 
