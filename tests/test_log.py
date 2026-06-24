@@ -93,6 +93,6 @@ def test_setup_parse_failures_log_idempotent(tmp_path: Path) -> None:
     time.sleep(0.1)
 
     content = (tmp_path / "parse_failures.log").read_text(encoding="utf-8")
-    assert (
-        content.count("idempotency_test_message") == 1
-    ), f"Expected exactly one write, got {content.count('idempotency_test_message')}"
+    assert content.count("idempotency_test_message") == 1, (
+        f"Expected exactly one write, got {content.count('idempotency_test_message')}"
+    )

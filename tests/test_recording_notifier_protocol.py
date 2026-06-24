@@ -38,9 +38,9 @@ def test_recording_notifier_satisfies_protocol() -> None:
         "on_olymp_reconnect_failed",
     )
     missing = [m for m in expected if m not in vars(RecordingNotifier)]
-    assert (
-        not missing
-    ), f"RecordingNotifier no longer satisfies Notifier Protocol — missing methods: {missing}"
+    assert not missing, (
+        f"RecordingNotifier no longer satisfies Notifier Protocol — missing methods: {missing}"
+    )
 
 
 def test_recording_notifier_isinstance_protocol() -> None:

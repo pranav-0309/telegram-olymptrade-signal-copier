@@ -213,7 +213,7 @@ async def test_start_emits_on_telegram_disconnect_on_connection_error(
 
     await client.start(notifier=notifier)
 
-    assert (
-        len(disconnect_calls) == 1
-    ), "on_telegram_disconnect must fire exactly once on ConnectionError"
+    assert len(disconnect_calls) == 1, (
+        "on_telegram_disconnect must fire exactly once on ConnectionError"
+    )
     assert len(sleeps) == 1  # one backoff sleep after the disconnect

@@ -79,7 +79,7 @@ def _within_window_signal_text(
     target_unix = now + seconds_from_now
     tz = ZoneInfo("America/Sao_Paulo")
     hhmm = _dt.datetime.fromtimestamp(target_unix, tz=tz).strftime("%H:%M")
-    return f"💰5-minute expiration\n" f"{pair};{hhmm};{direction_marker}\n"
+    return f"💰5-minute expiration\n{pair};{hhmm};{direction_marker}\n"
 
 
 # --- Happy path ----------------------------------------------------------
@@ -215,7 +215,7 @@ async def test_out_of_window_past_rejected() -> None:
 
     tz = ZoneInfo("America/Sao_Paulo")
     past_hhmm = _dt.datetime.fromtimestamp(five_min_ago, tz=tz).strftime("%H:%M")
-    text = f"💰5-minute expiration\n" f"EUR/JPY;{past_hhmm};PUT🟥\n"
+    text = f"💰5-minute expiration\nEUR/JPY;{past_hhmm};PUT🟥\n"
 
     event = make_event(text=text, chat_id=42, message_id=1)
     await listener.on_new_message(event)

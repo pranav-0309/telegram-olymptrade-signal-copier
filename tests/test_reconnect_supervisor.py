@@ -390,9 +390,9 @@ async def test_concurrent_detection_only_one_reconnect_loop(
     # Count on_olymp_disconnect calls — must be exactly 1.
     methods = [m for m, _ in notifier.calls]
     disconnect_count = methods.count("on_olymp_disconnect")
-    assert (
-        disconnect_count == 1
-    ), f"expected exactly 1 disconnect notification, got {disconnect_count}: {methods}"
+    assert disconnect_count == 1, (
+        f"expected exactly 1 disconnect notification, got {disconnect_count}: {methods}"
+    )
 
 
 # --- State-check branch regression tests (Task 6 follow-up) ----------------
