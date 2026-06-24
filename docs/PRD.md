@@ -919,6 +919,12 @@ Significant edits that change the source of truth. Minor copy-edits are not logg
 - **M11 spec:** `docs/superpowers/specs/2026-06-23-m11-railway-deployment-design.md`. Plan: `docs/superpowers/plans/2026-06-23-m11-railway-deployment.md`. No edits to vendored `olymptrade_ws/` (R-15).
 - **License:** PolyForm Strict 1.0.0 — free use/modify/distribute; no sale of the work or any derivative. See `LICENSE` and the License section in the README. Compatible with the vendored `olymptrade_ws` MIT license; both license texts are present in the repo and `COPY`'d into the Docker image.
 
+### v0.10 — M12 type & format cleanup
+
+- **M12 complete.** All 229 pre-existing mypy errors resolved via proper type annotations across 15 test files. Dead `[[tool.mypy.overrides]]` block removed from pyproject.toml (the `module` field used bare names that didn't match `tests.test_*`); new override added for `asyncpg` + `testcontainers` (these libs don't ship py.typed markers), which allowed removing 2 pre-existing `# type: ignore[import-untyped]` comments from `src/`. 5 test files reformatted with `ruff format`. CI's `typecheck` and `format` jobs pass; auto-deploy to Railway works end-to-end for the first time.
+- **Optional**: src/ weak-point sweep tightened 1 item per spec §7 (cast/Any/type: ignore/public API).
+- **M12 spec:** `docs/superpowers/specs/2026-06-23-m12-type-and-format-cleanup-design.md`. Plan: `docs/superpowers/plans/2026-06-23-m12-type-and-format-cleanup.md`. No edits to vendored `olymptrade_ws` (R-15).
+
 ### v0.6 — Strict time-window enforcement
 
 - Strict time-window enforcement across all 3 stages (FR-3.3, FR-3.6, FR-5.9) — a missed fire time on any stage ends the cascade with `error (signal_expired)`; no retry, no shifting, no skip-to-next-stage.
