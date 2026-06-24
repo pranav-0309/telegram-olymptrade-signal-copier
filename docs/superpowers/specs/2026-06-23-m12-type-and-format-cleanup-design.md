@@ -425,7 +425,7 @@ uv run pytest
 | `tests/_scheduler_fixtures.py` | +1 / -0 | 1 error |
 | `tests/test_log.py` | +1 / -0 + format | 1 error + format |
 | `tests/test_recording_notifier_protocol.py` | format only | 0 errors, just format |
-| `src/signal_copier/**/*.py` | varies (weak-point sweep) | TBD during implementation |
+| `src/signal_copier/**/*.py` | varies (0 to ~50 lines per file) | Discovered by the 4 searches in §7.1; each finding addressed per its section's rules |
 | `docs/PRD.md` | +5 lines | v0.10 changelog entry |
 
 **Total: ~17 files modified, ~140 lines added, ~25 lines deleted** (rough estimate; actual depends on annotation density and weak-point sweep findings).
