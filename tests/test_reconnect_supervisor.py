@@ -7,13 +7,14 @@ detects WS disconnects and a reconnect loop with exponential backoff.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
 from signal_copier.broker.base import Broker, BrokerAuthError
-from signal_copier.broker.olymp import OlympTradeBroker
+from signal_copier.broker.olymp import OlympTradeBroker, OlympTradeClient
 from signal_copier.broker.reconnect import (
     ReconnectingOlympTradeBroker,
     compute_backoff_seconds,
@@ -54,7 +55,7 @@ def _make_wrapper(
         account_id="12345",
         account_group="demo",
         notifier=notifier,
-        _client_factory=factory,
+        _client_factory=cast(Callable[[], OlympTradeClient], factory),
         reconnect_max_attempts=reconnect_max_attempts,
         watcher_poll_seconds=watcher_poll_seconds,
     )

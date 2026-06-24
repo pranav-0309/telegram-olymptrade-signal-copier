@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from signal_copier.config import Config
 from signal_copier.domain.signal import FailureReason, Signal
 from signal_copier.infra.clock import now_unix
+from signal_copier.infra.state_store import StateStore
 from signal_copier.notify.protocol import NoOpNotifier
 from signal_copier.telegram.listener import Listener
 from tests._scheduler_fixtures import RecordingNotifier
@@ -362,7 +364,7 @@ async def test_listener_emits_on_parse_failure_on_invalid_message() -> None:
     config = Config(timezone="America/Sao_Paulo")
     listener = Listener(
         target_chat_id=-100,
-        state_store=FakeStateStore(),
+        state_store=cast(StateStore, FakeStateStore()),
         queue=asyncio.Queue(),
         config=config,
         parse_failures_logger=NullLogger(),
@@ -380,7 +382,7 @@ async def test_listener_does_not_emit_on_parse_failure_for_valid_signal() -> Non
     config = Config(timezone="America/Sao_Paulo")
     listener = Listener(
         target_chat_id=-100,
-        state_store=FakeStateStore(),
+        state_store=cast(StateStore, FakeStateStore()),
         queue=asyncio.Queue(),
         config=config,
         parse_failures_logger=NullLogger(),

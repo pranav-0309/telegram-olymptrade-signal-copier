@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
+from signal_copier.broker.base import Broker
 from signal_copier.domain.gale import Stage
 from signal_copier.infra.db_rows import SignalRow, StageRow
 from signal_copier.recovery import (
@@ -41,7 +43,7 @@ async def test_recover_active_signals_returns_empty_report_when_no_active_signal
 
     report = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),  # unused when no signals to recover
+        broker=cast(Broker, object()),  # unused when no signals to recover
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=1_700_000_000.0,
     )
@@ -123,7 +125,7 @@ async def test_recover_within_window_calls_adopt() -> None:
 
     report = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=now,
     )
@@ -158,7 +160,7 @@ async def test_recover_expired_window_calls_record_timeout() -> None:
 
     report = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=now,
     )
@@ -188,7 +190,7 @@ async def test_recover_expired_gale2_window() -> None:
 
     report = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=now,
     )
@@ -209,13 +211,13 @@ async def test_recover_idempotent_no_active_signals_returns_zero() -> None:
 
     report1 = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=1.0,
     )
     report2 = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler,  # type: ignore[arg-type]
         now_unix=2.0,
     )
@@ -253,7 +255,7 @@ async def test_recover_mixed_signals_calls_correct_handlers_per_signal() -> None
 
     report2 = await recover_active_signals(
         state_store=store,  # type: ignore[arg-type]
-        broker=object(),
+        broker=cast(Broker, object()),
         scheduler=scheduler2,  # type: ignore[arg-type]
         now_unix=now_late,
     )

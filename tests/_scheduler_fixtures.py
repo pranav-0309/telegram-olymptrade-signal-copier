@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from signal_copier.broker.base import Broker, UnsupportedPairError
 from signal_copier.domain.gale import Stage
@@ -273,7 +273,7 @@ def make_signal_with_future_trigger(
     trigger_in_seconds: float,
     signal_id: str = "test-sig-1",
     pair: str = "EUR/JPY",
-    direction: str = "down",
+    direction: Literal["up", "down"] = "down",
     expiration_seconds: int = 300,
 ) -> Signal:
     """Build a Signal whose initial trigger is `trigger_in_seconds` from now.

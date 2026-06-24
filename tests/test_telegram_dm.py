@@ -6,10 +6,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from telethon import TelegramClient
 
 from signal_copier.config import Config
 from signal_copier.domain.signal import FailureReason, Signal
@@ -66,14 +67,18 @@ def _make_signal(**overrides: Any) -> Signal:
     return Signal(**defaults)
 
 
+def _notifier_for(fake: FakeTgClient) -> TelegramDMNotifier:
+    """Wrap a FakeTgClient as a TelegramDMNotifier. The cast keeps mypy strict-mode happy."""
+    return TelegramDMNotifier(tg_client=cast(TelegramClient, fake), config=_make_config())
+
+
 # --- Skeleton tests --------------------------------------------------------
 
 
 def test_satisfies_notifier_protocol() -> None:
     """TelegramDMNotifier must implement the full Notifier Protocol."""
-    from signal_copier.notify.telegram_dm import TelegramDMNotifier
 
-    notifier = TelegramDMNotifier(tg_client=FakeTgClient(), config=_make_config())
+    notifier = _notifier_for(FakeTgClient())
     assert isinstance(notifier, Notifier)
 
 
@@ -86,10 +91,8 @@ async def test_send_failure_logged_and_swallowed(
 
     _loguru_logger.remove()
 
-    from signal_copier.notify.telegram_dm import TelegramDMNotifier
-
     fake = FakeTgClient(raise_on_send=ConnectionError("simulated"))
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
 
     with caplog.at_level(logging.WARNING):
         await notifier.on_telegram_disconnect()
@@ -99,7 +102,7 @@ async def test_send_failure_logged_and_swallowed(
 @pytest.mark.asyncio
 async def test_signal_received() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_signal_received(signal)
     assert len(fake.sent) == 1
@@ -116,7 +119,7 @@ async def test_signal_received() -> None:
 @pytest.mark.asyncio
 async def test_bot_started() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_bot_started(mode="dry_run", watching="@analyst", timezone="America/Sao_Paulo")
     assert len(fake.sent) == 1
     expected = "🟢 Bot started\nMode: dry_run\nWatching: @analyst\nTimezone: America/Sao_Paulo"
@@ -126,7 +129,7 @@ async def test_bot_started() -> None:
 @pytest.mark.asyncio
 async def test_bot_stopping() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_bot_stopping(open_cascades=3)
     assert len(fake.sent) == 1
     expected = "🔴 Bot stopping\nOpen cascades: 3"
@@ -138,7 +141,7 @@ async def test_trade_placed_initial() -> None:
     from decimal import Decimal
 
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_trade_placed(
         signal, stage="initial", amount=Decimal("2.00"), trade_id="abc123"
@@ -159,7 +162,7 @@ async def test_trade_placed_gale1() -> None:
     from decimal import Decimal
 
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="up")
     await notifier.on_trade_placed(signal, stage="gale1", amount=Decimal("4.00"), trade_id="def456")
     expected = (
@@ -177,7 +180,7 @@ async def test_trade_placed_gale2() -> None:
     from decimal import Decimal
 
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_trade_placed(signal, stage="gale2", amount=Decimal("8.00"), trade_id="ghi789")
     expected = (
@@ -193,7 +196,7 @@ async def test_trade_placed_gale2() -> None:
 @pytest.mark.asyncio
 async def test_win_initial() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_win(
         signal,
@@ -214,7 +217,7 @@ async def test_win_initial() -> None:
 @pytest.mark.asyncio
 async def test_win_gale1() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_win(
         signal,
@@ -234,7 +237,7 @@ async def test_win_gale1() -> None:
 @pytest.mark.asyncio
 async def test_win_gale2() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_win(
         signal,
@@ -254,7 +257,7 @@ async def test_win_gale2() -> None:
 @pytest.mark.asyncio
 async def test_loss_initial_with_next_stage() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_loss(
         signal,
@@ -275,7 +278,7 @@ async def test_loss_initial_with_next_stage() -> None:
 @pytest.mark.asyncio
 async def test_loss_gale1_with_next_stage() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_loss(
         signal,
@@ -296,7 +299,7 @@ async def test_loss_gale1_with_next_stage() -> None:
 @pytest.mark.asyncio
 async def test_loss_gale2_no_next_stage() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_loss(
         signal,
@@ -332,7 +335,7 @@ async def test_loss_initial_uses_configured_gale_amount() -> None:
         amount_gale1=Decimal("5.00"),
         amount_gale2=Decimal("8.00"),
     )
-    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    notifier = TelegramDMNotifier(tg_client=cast(TelegramClient, fake), config=config)
     signal = _make_signal(direction="down")
     await notifier.on_loss(
         signal,
@@ -349,7 +352,7 @@ async def test_loss_initial_uses_configured_gale_amount() -> None:
 @pytest.mark.asyncio
 async def test_signal_expired_initial() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_signal_expired(signal, stage="initial", trigger_hhmm="10:20")
     expected = (
@@ -365,7 +368,7 @@ async def test_signal_expired_initial() -> None:
 @pytest.mark.asyncio
 async def test_signal_expired_gale1() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_signal_expired(signal, stage="gale1", trigger_hhmm="10:25")
     expected = (
@@ -381,7 +384,7 @@ async def test_signal_expired_gale1() -> None:
 @pytest.mark.asyncio
 async def test_signal_expired_gale2() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_signal_expired(signal, stage="gale2", trigger_hhmm="10:30")
     expected = (
@@ -397,7 +400,7 @@ async def test_signal_expired_gale2() -> None:
 @pytest.mark.asyncio
 async def test_cascade_complete() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     signal = _make_signal(direction="down")
     await notifier.on_cascade_complete(
         signal, final_state="done_win", cumulative_pnl=Decimal("1.84")
@@ -413,7 +416,7 @@ async def test_cascade_complete() -> None:
 async def test_rejected_by_loss_limit() -> None:
     fake = FakeTgClient()
     config = _make_config(daily_loss_limit=Decimal("50.00"))
-    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    notifier = TelegramDMNotifier(tg_client=cast(TelegramClient, fake), config=config)
     signal = _make_signal(direction="down")
     summary = DailySummaryRow(
         date=date(2026, 6, 21),
@@ -438,7 +441,7 @@ async def test_rejected_by_loss_limit() -> None:
 async def test_rejected_by_count_limit() -> None:
     fake = FakeTgClient()
     config = _make_config(daily_trade_limit=50)
-    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    notifier = TelegramDMNotifier(tg_client=cast(TelegramClient, fake), config=config)
     signal = _make_signal(direction="down")
     summary = DailySummaryRow(
         date=date(2026, 6, 21),
@@ -463,7 +466,7 @@ async def test_rejected_by_count_limit() -> None:
 async def test_rejected_by_drawdown_limit() -> None:
     fake = FakeTgClient()
     config = _make_config(daily_drawdown_pct=20)
-    notifier = TelegramDMNotifier(tg_client=fake, config=config)
+    notifier = TelegramDMNotifier(tg_client=cast(TelegramClient, fake), config=config)
     signal = _make_signal(direction="down")
     summary = DailySummaryRow(
         date=date(2026, 6, 21),
@@ -487,7 +490,7 @@ async def test_rejected_by_drawdown_limit() -> None:
 @pytest.mark.asyncio
 async def test_parse_failure() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     raw = "random text that doesn't match the signal regex" + "x" * 100
     await notifier.on_parse_failure(raw_text=raw, reason=FailureReason.MISSING_SIGNAL_LINE)
     # Preview is the first 80 chars.
@@ -504,7 +507,7 @@ async def test_telegram_dm_on_olymp_disconnect() -> None:
     """Softened copy: M10 reconnect supervisor will attempt reconnection,
     so the disconnect message says 'Reconnecting…' (not 'Process will exit')."""
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_olymp_disconnect()
     assert fake.sent == ["🔌 OlympTrade disconnected. Reconnecting…"]
 
@@ -512,7 +515,7 @@ async def test_telegram_dm_on_olymp_disconnect() -> None:
 @pytest.mark.asyncio
 async def test_telegram_dm_on_olymp_reconnecting() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_olymp_reconnecting(
         attempt=2,
         max_attempts=5,
@@ -527,7 +530,7 @@ async def test_telegram_dm_on_olymp_reconnecting() -> None:
 @pytest.mark.asyncio
 async def test_telegram_dm_on_olymp_reconnected() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_olymp_reconnected(
         attempts_used=1,
         total_downtime_seconds=12.3,
@@ -544,7 +547,7 @@ async def test_telegram_dm_on_olymp_reconnected() -> None:
 @pytest.mark.asyncio
 async def test_telegram_dm_on_olymp_reconnect_failed() -> None:
     fake = FakeTgClient()
-    notifier = TelegramDMNotifier(tg_client=fake, config=_make_config())
+    notifier = _notifier_for(fake)
     await notifier.on_olymp_reconnect_failed(
         attempts=5,
         total_downtime_seconds=67.8,

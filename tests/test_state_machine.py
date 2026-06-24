@@ -29,7 +29,7 @@ def _config(**overrides: Any) -> Config:
 
 
 def _signal(**overrides: Any) -> Signal:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         signal_id="test-sig-001",
         pair="EUR/JPY",
         direction="down",
@@ -369,17 +369,21 @@ def test_terminal_states_reject_fire_event(terminal: str) -> None:
     state = _initial_state()
     if terminal == "done_win":
         placed = transition(state, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+        assert placed is not None
         r = transition(
             placed, ResultEvent(result="win", now_unix=INITIAL_UNIX + 60), config=_config()
         )
     elif terminal == "done_loss":
         s1 = transition(state, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+        assert s1 is not None
         s2 = transition(
             s1, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
         ).new_state
+        assert s2 is not None
         s3 = transition(
             s2, ResultEvent(result="loss", now_unix=GALE1_UNIX + 300), config=_config()
         ).new_state
+        assert s3 is not None
         r = transition(s3, ResultEvent(result="loss", now_unix=GALE2_UNIX + 300), config=_config())
     else:  # error
         r = transition(state, FireEvent(now_unix=INITIAL_UNIX + 100), config=_config())
@@ -396,9 +400,11 @@ def test_terminal_states_reject_fire_event(terminal: str) -> None:
 def test_full_cascade_initial_win_path() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1, ResultEvent(result="win", now_unix=INITIAL_UNIX + 60), config=_config()
     ).new_state
+    assert s2 is not None
     assert s2.state == "done_win"
     assert s2.cumulative_pnl == Decimal("1.84")
 
@@ -406,12 +412,15 @@ def test_full_cascade_initial_win_path() -> None:
 def test_full_cascade_gale1_win_path() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
     ).new_state
+    assert s2 is not None
     s3 = transition(
         s2, ResultEvent(result="win", now_unix=GALE1_UNIX + 60), config=_config()
     ).new_state
+    assert s3 is not None
     assert s3.state == "done_win"
     assert s3.cumulative_pnl == Decimal("1.68")
 
@@ -419,15 +428,19 @@ def test_full_cascade_gale1_win_path() -> None:
 def test_full_cascade_gale2_win_path() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
     ).new_state
+    assert s2 is not None
     s3 = transition(
         s2, ResultEvent(result="loss", now_unix=GALE1_UNIX + 300), config=_config()
     ).new_state
+    assert s3 is not None
     s4 = transition(
         s3, ResultEvent(result="win", now_unix=GALE2_UNIX + 60), config=_config()
     ).new_state
+    assert s4 is not None
     assert s4.state == "done_win"
     assert s4.cumulative_pnl == Decimal("1.36")
 
@@ -435,15 +448,19 @@ def test_full_cascade_gale2_win_path() -> None:
 def test_full_cascade_full_loss_path() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
     ).new_state
+    assert s2 is not None
     s3 = transition(
         s2, ResultEvent(result="loss", now_unix=GALE1_UNIX + 300), config=_config()
     ).new_state
+    assert s3 is not None
     s4 = transition(
         s3, ResultEvent(result="loss", now_unix=GALE2_UNIX + 300), config=_config()
     ).new_state
+    assert s4 is not None
     assert s4.state == "done_loss"
     assert s4.cumulative_pnl == Decimal("-14.00")
 
@@ -451,6 +468,7 @@ def test_full_cascade_full_loss_path() -> None:
 def test_full_cascade_signal_expired_at_initial() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX + 100), config=_config()).new_state
+    assert s1 is not None
     assert s1.state == "error"
     assert s1.error_reason == "signal_expired"
 
@@ -458,11 +476,13 @@ def test_full_cascade_signal_expired_at_initial() -> None:
 def test_full_cascade_signal_expired_at_gale1() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1,
         ResultEvent(result="loss", now_unix=GALE1_UNIX + 100),
         config=_config(),
     ).new_state
+    assert s2 is not None
     assert s2.state == "error"
     assert s2.error_reason == "signal_expired"
 
@@ -470,13 +490,16 @@ def test_full_cascade_signal_expired_at_gale1() -> None:
 def test_full_cascade_signal_expired_at_gale2() -> None:
     s0 = _initial_state()
     s1 = transition(s0, FireEvent(now_unix=INITIAL_UNIX), config=_config()).new_state
+    assert s1 is not None
     s2 = transition(
         s1, ResultEvent(result="loss", now_unix=INITIAL_UNIX + 300), config=_config()
     ).new_state
+    assert s2 is not None
     s3 = transition(
         s2,
         ResultEvent(result="loss", now_unix=GALE2_UNIX + 100),
         config=_config(),
     ).new_state
+    assert s3 is not None
     assert s3.state == "error"
     assert s3.error_reason == "signal_expired"

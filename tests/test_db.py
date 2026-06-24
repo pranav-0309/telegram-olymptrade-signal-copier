@@ -419,7 +419,7 @@ async def test_record_stage_placed_inserts_row_with_all_fields(db: Database) -> 
 async def test_record_stage_placed_raises_on_duplicate(db: Database) -> None:
     signal = _make_signal()
     await db.state_store.upsert_signal(signal)
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         pair=signal.pair,
         direction=signal.direction,
         amount=_D("2.00"),
