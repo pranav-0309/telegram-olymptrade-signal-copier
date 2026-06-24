@@ -83,20 +83,6 @@ module = [
 ]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-# Tests use Pydantic private APIs (_env_file), untyped **kwargs helpers, and
-# rely on mypy-not-knowable narrowing (e.g. transition() returning a state the
-# caller then asserts is non-None). Keep src strict; relax tests only.
-module = [
-    "test_config", "test_db", "test_gale_math", "test_main", "test_parser",
-    "test_state_machine",
-    "test_clock", "test_log", "test_auth",
-    "test_telegram_client", "test_telegram_listener",
-    "test_scheduler", "test_notifier",  # M6: NEW
-    "test_olymp_broker", "test_olymp_broker_recorded",  # M8: NEW
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
