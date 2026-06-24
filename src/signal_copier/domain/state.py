@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 
 from signal_copier.config import Config
 from signal_copier.domain.gale import Stage, amount_for_stage
@@ -168,7 +168,7 @@ def _to_placed(
     This couples M2 to the 5-minute expiration — see Risk #10.
     """
     trigger_unix = state.trigger_unix + 5 * 60  # always 5min after current stage
-    next_state: AllStates = f"placed_{next_stage}"  # type: ignore[assignment]
+    next_state: AllStates = cast(AllStates, f"placed_{next_stage}")
     return SignalState(
         signal_id=state.signal_id,
         pair=state.pair,
