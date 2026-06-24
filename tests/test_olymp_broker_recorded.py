@@ -13,10 +13,11 @@ import asyncio
 import json
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from signal_copier.broker.olymp import OlympTradeBroker
+from signal_copier.broker.olymp import OlympTradeBroker, OlympTradeClient
 from tests._broker_fixtures import FakeOlympTradeClient
 from tests._scheduler_fixtures import RecordingNotifier
 
@@ -37,7 +38,7 @@ async def test_recorded_e26_message_resolves_correctly() -> None:
         account_group="demo",
         notifier=notifier,
     )
-    broker._client = FakeOlympTradeClient()
+    broker._client = cast(OlympTradeClient, FakeOlympTradeClient())
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 

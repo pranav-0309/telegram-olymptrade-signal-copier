@@ -4,6 +4,7 @@ import asyncio
 import logging
 import unittest.mock
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
@@ -12,11 +13,21 @@ from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
     OlympTradeBroker,
+    OlympTradeClient,
     _map_status,
     _normalize_key,
 )
 from tests._broker_fixtures import FakeOlympTradeClient, make_signal
 from tests._scheduler_fixtures import RecordingNotifier
+
+
+def _attach_fake_client(broker: OlympTradeBroker, fake: FakeOlympTradeClient) -> None:
+    """Inject a FakeOlympTradeClient into a broker in lieu of running connect().
+
+    The cast keeps mypy strict-mode happy: the broker's _client field is typed
+    as OlympTradeClient | None, but a duck-typed fake is the test's substitute.
+    """
+    broker._client = cast(OlympTradeClient, fake)
 
 
 def test_normalize_key_handles_plain() -> None:
@@ -155,7 +166,7 @@ async def test_build_asset_map_populates_assets(notifier: RecordingNotifier) -> 
     """Captures the e:1068 push and populates the asset map."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client  # normally set by connect()
+    _attach_fake_client(broker, fake_client)  # normally set by connect()
 
     # Schedule an e:1068 delivery to fire shortly after _build_asset_map starts
     async def deliver_assets() -> None:
@@ -183,7 +194,7 @@ async def test_build_asset_map_timeout_raises_broker_auth_error(
     """
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client  # normally set by connect()
+    _attach_fake_client(broker, fake_client)  # normally set by connect()
     import unittest.mock as _mock
 
     with (
@@ -199,7 +210,7 @@ async def test_build_asset_map_empty_raises_broker_auth_error(
     """e:1068 arrives with empty list → BrokerAuthError."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client  # normally set by connect()
+    _attach_fake_client(broker, fake_client)  # normally set by connect()
 
     async def deliver_empty() -> None:
         await asyncio.sleep(0.05)
@@ -214,7 +225,7 @@ async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifi
     """Entries missing 'pair' are skipped; valid entries still land in the map."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client  # normally set by connect()
+    _attach_fake_client(broker, fake_client)  # normally set by connect()
 
     async def deliver_mixed() -> None:
         await asyncio.sleep(0.05)
@@ -243,7 +254,7 @@ async def test_cache_start_of_day_balance_success(notifier: RecordingNotifier) -
     fake_client = FakeOlympTradeClient()
     fake_client.current_balance = {"d": [{"group": "demo", "balance": 10000.0}]}
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     await broker._cache_start_of_day_balance()
     assert broker._start_of_day_balance == Decimal("10000.0")
 
@@ -254,7 +265,7 @@ async def test_cache_start_of_day_balance_timeout_leaves_none(
     fake_client = FakeOlympTradeClient()
     fake_client.current_balance = None
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     # Speed up the test by patching the module-level asyncio.sleep
     real_sleep = asyncio.sleep
 
@@ -273,7 +284,7 @@ async def test_cache_start_of_day_balance_skips_wrong_group(
     # Broker reports real, but we configured demo
     fake_client.current_balance = {"d": [{"group": "real", "balance": 5000.0}]}
     broker = _make_broker(notifier, fake_client=fake_client, account_group="demo")
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     await broker._cache_start_of_day_balance()
     assert broker._start_of_day_balance is None
 
@@ -285,7 +296,7 @@ async def test_place_resolves_pair_via_asset_map(notifier: RecordingNotifier) ->
     """EUR/JPY → fake.place_order called with pair='EURJPY', category='forex'."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -304,7 +315,7 @@ async def test_place_resolves_pair_via_asset_map(notifier: RecordingNotifier) ->
 async def test_place_otc_pair_resolves_correctly(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY-OTC", "otc")}
 
@@ -320,7 +331,7 @@ async def test_place_otc_pair_resolves_correctly(notifier: RecordingNotifier) ->
 async def test_place_unsupported_pair_raises(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -332,7 +343,7 @@ async def test_place_unsupported_pair_raises(notifier: RecordingNotifier) -> Non
 async def test_place_records_pending_future(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -347,7 +358,7 @@ async def test_place_returns_broker_trade_id_as_string(notifier: RecordingNotifi
     fake_client = FakeOlympTradeClient()
     fake_client.trade.next_response = {"id": 12345, "status": "open"}
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -362,7 +373,7 @@ async def test_place_none_response_raises_broker_auth_error(
     fake_client = FakeOlympTradeClient()
     fake_client.trade.next_response = None
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -375,7 +386,7 @@ async def test_place_missing_id_in_response_raises(notifier: RecordingNotifier) 
     fake_client = FakeOlympTradeClient()
     fake_client.trade.next_response = {"status": "win"}
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -388,7 +399,7 @@ async def test_place_connection_error_propagates(notifier: RecordingNotifier) ->
     fake_client = FakeOlympTradeClient()
     fake_client.trade.raise_on_call = ConnectionError("WS down")
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -421,7 +432,7 @@ async def test_on_trade_closed_resolves_pending_future(
     """Delivering e:26 with matching trade_id resolves the pending Future."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -446,7 +457,7 @@ async def test_on_trade_closed_caches_when_no_pending(notifier: RecordingNotifie
     """Delivering e:26 with NO pending entry caches to _results for late wait_result."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
@@ -463,7 +474,7 @@ async def test_on_trade_closed_caches_when_no_pending(notifier: RecordingNotifie
 async def test_on_trade_closed_ignores_empty_d_list(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
@@ -476,7 +487,7 @@ async def test_on_trade_closed_ignores_empty_d_list(notifier: RecordingNotifier)
 async def test_on_trade_closed_ignores_missing_id(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
@@ -491,7 +502,7 @@ async def test_on_trade_closed_ignores_duplicate_delivery(
     """Second e:26 for the same trade_id is a no-op (WARNING logged)."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
 
@@ -518,7 +529,7 @@ async def test_on_trade_accepted_logs_only(
 ) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_ACCEPTED, broker._on_trade_accepted)
     broker._connected = True
 
@@ -539,7 +550,7 @@ async def test_on_trade_interim_logs_only(
 ) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, broker._on_trade_interim)
     broker._connected = True
 
@@ -560,7 +571,7 @@ async def test_on_trade_interim_logs_only(
 async def test_wait_result_resolves_on_e26_win(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -583,7 +594,7 @@ async def test_wait_result_resolves_on_e26_win(notifier: RecordingNotifier) -> N
 async def test_wait_result_resolves_on_e26_loss(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -607,7 +618,7 @@ async def test_wait_result_resolves_on_e26_tie(notifier: RecordingNotifier) -> N
     """tie → loss (FR-5.3 cascade treatment)."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -633,7 +644,7 @@ async def test_wait_result_resolves_after_e26_already_arrived(
     """Race recovery: e:26 cached in _results when wait_result is called."""
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -659,7 +670,7 @@ async def test_wait_result_timeout_when_connected_returns_timeout(
     fake_client = FakeOlympTradeClient()
     fake_client.connection._connected = True
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -677,7 +688,7 @@ async def test_wait_result_timeout_when_disconnected_raises(
     fake_client = FakeOlympTradeClient()
     fake_client.connection._connected = False  # broker disconnected
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
 
@@ -695,7 +706,7 @@ async def test_wait_result_timeout_when_disconnected_raises(
 async def test_wait_result_unknown_trade_id_returns_error(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
 
     result = await broker.wait_result("nope", timeout=2.0)
@@ -719,7 +730,7 @@ async def test_wait_result_before_connect_raises(notifier: RecordingNotifier) ->
 async def test_close_is_idempotent(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
 
     await broker.close()
@@ -730,7 +741,7 @@ async def test_close_is_idempotent(notifier: RecordingNotifier) -> None:
 async def test_close_stops_underlying_client(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
 
     await broker.close()
@@ -741,7 +752,7 @@ async def test_close_stops_underlying_client(notifier: RecordingNotifier) -> Non
 async def test_close_cancels_pending_futures(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._client.register_callback(parameters.E_TRADE_CLOSED, broker._on_trade_closed)
     broker._connected = True
     broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
@@ -759,7 +770,7 @@ async def test_close_cancels_pending_futures(notifier: RecordingNotifier) -> Non
 async def test_close_clears_results_cache(notifier: RecordingNotifier) -> None:
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
-    broker._client = fake_client
+    _attach_fake_client(broker, fake_client)
     broker._connected = True
     broker._results["some_id"] = {"result": "win", "pnl": Decimal("1.0")}
 

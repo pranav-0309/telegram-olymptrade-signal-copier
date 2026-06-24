@@ -18,6 +18,7 @@ import pytest
 
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
+from signal_copier.domain.state import SignalState
 from signal_copier.scheduler.trigger import Scheduler, SignalSupervisor, compute_target_monotonic
 from tests._scheduler_fixtures import (
     FakeBroker,
@@ -205,7 +206,7 @@ async def test_scheduler_cancellation_propagates_to_supervisors() -> None:
 # --- SignalSupervisor intake tests (Task 8) ------------------------------
 
 
-async def _no_op_drive_cascade(state: Any) -> None:
+async def _no_op_drive_cascade(_state: SignalState) -> None:
     return None
 
 
@@ -250,7 +251,7 @@ async def test_supervisor_emits_on_signal_received_for_fresh_signal() -> None:
     )
     # Stub the cascade so the supervisor exits after intake (Task 9 wires
     # the real _drive_cascade; here we patch it to a no-op).
-    supervisor._drive_cascade = _no_op_drive_cascade  # type: ignore[method-assign]
+    setattr(supervisor, "_drive_cascade", _no_op_drive_cascade)  # noqa: B010
 
     await supervisor.run()
 
@@ -453,7 +454,7 @@ async def test_supervisor_no_rejection_when_limits_disabled(
         config=config,
         signal_id="test-sig-nolimit",
     )
-    supervisor._drive_cascade = _no_op_drive_cascade  # type: ignore[method-assign]
+    setattr(supervisor, "_drive_cascade", _no_op_drive_cascade)  # noqa: B010
 
     await supervisor.run()
 

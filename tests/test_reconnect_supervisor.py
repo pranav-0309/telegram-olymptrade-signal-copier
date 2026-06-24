@@ -269,12 +269,12 @@ async def test_reconnect_exhausts_after_max_attempts(
     # Pre-populate _inner with a real connected fake so close() inside the
     # reconnect loop succeeds (and so the wrapper has something to tear down).
     good_inner_factory = FakeClientFactory([FakeOlympTradeClient()])
-    wrapper._client_factory = good_inner_factory
+    wrapper._client_factory = cast(Callable[[], OlympTradeClient], good_inner_factory)
     wrapper._inner = wrapper._build_inner()
     await wrapper._inner.connect()
 
     # Now swap to the bad factory and trigger the reconnect loop.
-    wrapper._client_factory = factory
+    wrapper._client_factory = cast(Callable[[], OlympTradeClient], factory)
 
     with pytest.raises(BrokerAuthError, match="reconnect exhausted"):
         await wrapper._trigger_reconnect()
@@ -316,7 +316,10 @@ async def test_reconnect_resets_failure_counter_on_success(
     await wrapper._inner.connect()
 
     # First reconnect cycle: attempt 1 fails, attempt 2 succeeds.
-    wrapper._client_factory = FakeClientFactory([bad_fake, good_fake])
+    wrapper._client_factory = cast(
+        Callable[[], OlympTradeClient],
+        FakeClientFactory([bad_fake, good_fake]),
+    )
     await wrapper._trigger_reconnect()
     assert wrapper._consecutive_failures == 0
 
@@ -327,7 +330,10 @@ async def test_reconnect_resets_failure_counter_on_success(
         raise BrokerAuthError("permanent")
 
     bad_fake2.start = bad_start2  # type: ignore[method-assign]
-    wrapper._client_factory = FakeClientFactory([bad_fake2, bad_fake2, bad_fake2])
+    wrapper._client_factory = cast(
+        Callable[[], OlympTradeClient],
+        FakeClientFactory([bad_fake2, bad_fake2, bad_fake2]),
+    )
 
     with pytest.raises(BrokerAuthError, match="reconnect exhausted"):
         await wrapper._trigger_reconnect()
