@@ -28,7 +28,7 @@ Keep this section in sync. When you change anything under olymptrade_ws/, add an
 - YYYY-MM-DD: <what> — <why> (issue / upstream PR link if any)
 -->
 
-_None. The vendored code is byte-identical to the upstream copy. Any future patch must be recorded here, and ideally accompanied by a `git diff` against the upstream snapshot for review._
+- 2026-06-25: `core/connection.py` — renamed `extra_headers=` to `additional_headers=` in the `websockets.connect()` call. Upstream code targets an older `websockets` version; our project pins `websockets>=16.0` where the kwarg was renamed. Without this patch, OlympTradeBroker fails at startup with `BaseEventLoop.create_connection() got an unexpected keyword argument 'extra_headers'`.
 
 ## Re-vendoring
 

@@ -39,7 +39,7 @@ class Connection:
                 logger.info(f"Attempting to connect to {self.uri}...")
                 self.websocket = await websockets.connect(
                     self.uri,
-                    extra_headers=headers,
+                    additional_headers=headers,
                     ping_interval=None, # Disable automatic pings if we handle manually
                     open_timeout=parameters.DEFAULT_CONNECT_TIMEOUT
                 )
