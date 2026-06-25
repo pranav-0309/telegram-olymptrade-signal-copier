@@ -29,6 +29,7 @@ Keep this section in sync. When you change anything under olymptrade_ws/, add an
 -->
 
 - 2026-06-25: `core/connection.py` — renamed `extra_headers=` to `additional_headers=` in the `websockets.connect()` call. Upstream code targets an older `websockets` version; our project pins `websockets>=16.0` where the kwarg was renamed. Without this patch, OlympTradeBroker fails at startup with `BaseEventLoop.create_connection() got an unexpected keyword argument 'extra_headers'`.
+- 2026-06-25: `core/connection.py` — replaced `ws.closed` (boolean) with `ws.state.name == "OPEN"` (State enum). In websockets 14+, the `closed` attribute was removed; use `state` (a `State` enum with values CONNECTING / OPEN / CLOSING / CLOSED). Without this patch, the broker connects then immediately crashes with `'ClientConnection' object has no attribute 'closed'`.
 
 ## Re-vendoring
 

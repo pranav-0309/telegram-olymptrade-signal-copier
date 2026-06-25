@@ -22,7 +22,11 @@ class Connection:
 
     @property
     def is_connected(self) -> bool:
-        return self._is_connected and self.websocket is not None and not self.websocket.closed
+        return (
+            self._is_connected
+            and self.websocket is not None
+            and self.websocket.state.name == "OPEN"
+        )
 
     async def connect(self):
         async with self._connect_lock:
@@ -81,7 +85,7 @@ class Connection:
                     logger.error(f"Error during receiver task cancellation: {e}")
                 self._receive_task = None
 
-            if self.websocket and not self.websocket.closed:
+            if self.websocket and self.websocket.state.name == "OPEN":
                 try:
                     await self.websocket.close()
                     logger.info("🔌 WebSocket connection closed.")
