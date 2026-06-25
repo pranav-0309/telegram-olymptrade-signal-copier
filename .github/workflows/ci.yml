@@ -92,8 +92,13 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-      - name: Sync deps
-        run: uv sync --frozen
+      - name: Sync deps (non-editable so migrations force-include runs)
+        # --no-editable makes uv build a real wheel and install it,
+        # which triggers hatchling's [tool.hatch.build.targets.wheel.force-include]
+        # for migrations/. Editable installs skip force-include, leaving
+        # importlib.resources.files("signal_copier").joinpath("migrations/...")
+        # pointing at a missing path.
+        run: uv sync --frozen --no-editable
       - name: Run tests
         run: uv run pytest
 

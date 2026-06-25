@@ -22,8 +22,12 @@ COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY LICENSE ./LICENSE
 
-# Install the project itself now that force-include paths exist
-RUN uv sync --frozen --no-dev
+# Install the project itself now that force-include paths exist.
+# --no-editable makes uv build a real wheel and install it, which triggers
+# hatchling's [tool.hatch.build.targets.wheel.force-include] for migrations/.
+# Editable installs skip force-include, leaving importlib.resources.files()
+# pointing at a missing path.
+RUN uv sync --frozen --no-dev --no-editable
 
 # Run as non-root
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
