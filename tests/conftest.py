@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator, Generator
 from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from testcontainers.postgres import PostgresContainer
 
 if TYPE_CHECKING:
     from signal_copier.infra.db import Database
@@ -14,7 +14,14 @@ if TYPE_CHECKING:
 
 @pytest_asyncio.fixture(scope="session")
 async def pg_dsn() -> AsyncIterator[str]:
-    """Spin up a real PG 16 container, return its DSN, drop at session end."""
+    """Return a Postgres DSN. Prefer DATABASE_URL env var (CI); fall back to
+    testcontainers for local dev where the developer has Docker running."""
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn:
+        yield dsn
+        return
+    from testcontainers.postgres import PostgresContainer
+
     with PostgresContainer("postgres:16-alpine") as pg:
         yield pg.get_connection_url(driver=None)
 
