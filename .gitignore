@@ -52,10 +52,6 @@ data/
 # src/olymptrade_ws/VENDORED.md - NOT tracked in this repo)
 /OlympTradeAPI/
 
-# Build artifact from Hatchling force-include (migrations/ → signal_copier/migrations/
-# inside the installed package). Created during editable install, not source.
-/src/signal_copier/migrations/
-
 # OS
 .DS_Store
 

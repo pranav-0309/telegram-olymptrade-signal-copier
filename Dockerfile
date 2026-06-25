@@ -12,22 +12,16 @@ COPY src/signal_copier/__main__.py ./src/signal_copier/__main__.py
 
 # Install runtime deps only (--no-dev skips pytest/ruff/mypy in the image).
 # --no-install-project skips the editable install of this package itself —
-# hatchling validates force-include paths (migrations/) at build time, but
-# the migrations/ COPY happens below. We install the project separately
-# after the rest of the source is in place.
+# we install the project in a second pass below so the cache layer doesn't
+# depend on the full src/ tree being copied yet.
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Now copy the rest
+# Now copy the rest (migrations/ now lives inside src/signal_copier/)
 COPY src/ ./src/
-COPY migrations/ ./migrations/
 COPY LICENSE ./LICENSE
 
-# Install the project itself now that force-include paths exist.
-# --no-editable makes uv build a real wheel and install it, which triggers
-# hatchling's [tool.hatch.build.targets.wheel.force-include] for migrations/.
-# Editable installs skip force-include, leaving importlib.resources.files()
-# pointing at a missing path.
-RUN uv sync --frozen --no-dev --no-editable
+# Install the project itself now that the full source tree is in place.
+RUN uv sync --frozen --no-dev
 
 # Run as non-root
 RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
