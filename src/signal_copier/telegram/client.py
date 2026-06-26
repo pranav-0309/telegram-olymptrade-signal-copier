@@ -5,7 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from telethon import TelegramClient as _TelethonClient
+from telethon import TelegramClient as TelethonClient
 from telethon.errors import FloodWaitError
 from telethon.events import MessageEdited, NewMessage
 from telethon.sessions import StringSession
@@ -41,8 +41,9 @@ class TelegramClient:
 
     Owns the StringSession lifecycle, the reconnect supervisor, and
     the FloodWaitError policy. Construction is sync (validates config
-    eagerly — D-12). connect() resolves the target chat. start() runs
-    the client until disconnect with exponential-backoff reconnect.
+    eagerly — D-12). connect() opens the MTProto connection; ChannelResolver resolves the target
+    chat. start() runs the client until disconnect with exponential-backoff
+    reconnect.
     """
 
     def __init__(
@@ -79,7 +80,7 @@ class TelegramClient:
         self._target_chat = target_chat
         self._session_string = session_string
 
-        self._client: _TelethonClient | None = None
+        self._client: TelethonClient | None = None
         self._target_chat_id: int | None = None
 
     @property
@@ -91,7 +92,7 @@ class TelegramClient:
         return self._target_chat_id
 
     @property
-    def raw_client(self) -> _TelethonClient:
+    def raw_client(self) -> TelethonClient:
         """The underlying Telethon client. Escape hatch for ChannelResolver
         so it can call get_dialogs(). All other components should use
         TelegramClient's own API."""
@@ -110,7 +111,7 @@ class TelegramClient:
     async def connect(self) -> None:
         """Authenticate and open the MTProto connection. Does NOT resolve
         the target chat — that is ChannelResolver's responsibility."""
-        self._client = _TelethonClient(
+        self._client = TelethonClient(
             StringSession(self._session_string),
             self._api_id,
             self._api_hash,
