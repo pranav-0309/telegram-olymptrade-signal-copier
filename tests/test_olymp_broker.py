@@ -14,6 +14,7 @@ from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
     ASSET_MAP_TIMEOUT_SECONDS,
+    INSTRUMENT_LIST_EVENT,
     OlympTradeBroker,
     _map_status,
     _normalize_key,
@@ -29,6 +30,18 @@ def _attach_fake_client(broker: OlympTradeBroker, fake: FakeOlympTradeClient) ->
     as OlympTradeClient | None, but a duck-typed fake is the test's substitute.
     """
     broker._client = cast(OlympTradeClient, fake)
+
+
+def _prepare_asset_capture(broker: OlympTradeBroker, fake: FakeOlympTradeClient) -> None:
+    """Pre-register the e:1054 capture Future + callback, mimicking what
+    OlympTradeBroker.connect() does before initialize_session().
+
+    Tests that call _build_asset_map() directly (bypassing connect()) MUST
+    call this first, or the broker's AssertionError fires.
+    """
+    loop = asyncio.get_event_loop()
+    broker._instrument_list_future = loop.create_future()
+    fake.register_callback(INSTRUMENT_LIST_EVENT, broker._on_instrument_list)
 
 
 def test_normalize_key_handles_plain() -> None:
@@ -178,6 +191,7 @@ async def test_build_asset_map_populates_assets(notifier: RecordingNotifier) -> 
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)  # normally set by connect()
+    _prepare_asset_capture(broker, fake_client)
 
     # Schedule an e:1068 delivery to fire shortly after _build_asset_map starts
     async def deliver_assets() -> None:
@@ -199,17 +213,24 @@ async def test_build_asset_map_populates_assets(notifier: RecordingNotifier) -> 
 async def test_build_asset_map_timeout_raises_broker_auth_error(
     notifier: RecordingNotifier,
 ) -> None:
-    """No e:1068 push within ASSET_MAP_TIMEOUT_SECONDS → BrokerAuthError.
+    """Neither e:1068 nor e:1054 push within ASSET_MAP_TIMEOUT_SECONDS →
+    BrokerAuthError.
 
-    We patch asyncio.wait_for to simulate the timeout without actually waiting.
+    We patch asyncio.wait to return immediately with empty done/pending sets,
+    simulating the timeout path. This avoids actually waiting 180s.
     """
-    fake_client = FakeOlympTradeClient()
-    broker = _make_broker(notifier, fake_client=fake_client)
-    _attach_fake_client(broker, fake_client)  # normally set by connect()
     import unittest.mock as _mock
 
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    _prepare_asset_capture(broker, fake_client)
+
+    async def _empty_wait(*_args: object, **_kwargs: object) -> tuple[set[object], set[object]]:
+        return (set(), set())
+
     with (
-        _mock.patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
+        _mock.patch("asyncio.wait", side_effect=_empty_wait),
         pytest.raises(BrokerAuthError, match="asset map"),
     ):
         await broker._build_asset_map()
@@ -222,6 +243,7 @@ async def test_build_asset_map_empty_raises_broker_auth_error(
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)  # normally set by connect()
+    _prepare_asset_capture(broker, fake_client)
 
     async def deliver_empty() -> None:
         await asyncio.sleep(0.05)
@@ -237,6 +259,7 @@ async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifi
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
     _attach_fake_client(broker, fake_client)  # normally set by connect()
+    _prepare_asset_capture(broker, fake_client)
 
     async def deliver_mixed() -> None:
         await asyncio.sleep(0.05)
@@ -259,6 +282,88 @@ async def test_build_asset_map_skips_malformed_entries(notifier: RecordingNotifi
         "EUR/JPY": ("EURJPY", "forex"),
         "GBP/USD": ("GBPUSD", "forex"),
     }
+
+
+# --- e:1054 (instrument list) fallback path --------------------------------
+
+
+async def test_build_asset_map_uses_e1054_when_registered_first(
+    notifier: RecordingNotifier,
+) -> None:
+    """If e:1054 fires before e:1068, use e:1054 data. Verifies the
+    FIRST_COMPLETED race winner.
+    """
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    _prepare_asset_capture(broker, fake_client)
+
+    # Deliver ONLY e:1054 (e:1068 never arrives).
+    async def deliver_instruments() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(
+            INSTRUMENT_LIST_EVENT,
+            {
+                "d": [
+                    {"id": "EURJPY", "title": "EUR/JPY", "group": "currency"},
+                    {"id": "ORCL", "title": "ORCL", "group": "currency"},
+                ]
+            },
+        )
+
+    asyncio.create_task(deliver_instruments())
+    await broker._build_asset_map()
+
+    # e:1054 uses "id" field (not "pair"); category defaults to "digital"
+    # because e:1054 has "group", not "cat".
+    assert broker._assets == {
+        "EUR/JPY": ("EURJPY", "digital"),
+        "ORCL": ("ORCL", "digital"),
+    }
+
+
+async def test_build_asset_map_uses_e1068_when_it_fires_first(
+    notifier: RecordingNotifier,
+) -> None:
+    """If e:1068 fires before e:1054, use e:1068 data (preserves cat)."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    _prepare_asset_capture(broker, fake_client)
+
+    async def deliver_account_info() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(
+            ASSET_LIST_EVENT,
+            {"d": [{"pair": "EURJPY", "cat": "forex"}]},
+        )
+
+    asyncio.create_task(deliver_account_info())
+    await broker._build_asset_map()
+
+    assert broker._assets == {"EUR/JPY": ("EURJPY", "forex")}
+
+
+async def test_build_asset_map_handles_e1054_with_existing_cat_field(
+    notifier: RecordingNotifier,
+) -> None:
+    """If e:1054 data includes a 'cat' field, use it; otherwise default."""
+    fake_client = FakeOlympTradeClient()
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    _prepare_asset_capture(broker, fake_client)
+
+    async def deliver() -> None:
+        await asyncio.sleep(0.05)
+        await fake_client._deliver_event(
+            INSTRUMENT_LIST_EVENT,
+            {"d": [{"id": "EURJPY", "title": "EUR/JPY", "group": "currency", "cat": "forex"}]},
+        )
+
+    asyncio.create_task(deliver())
+    await broker._build_asset_map()
+
+    assert broker._assets == {"EUR/JPY": ("EURJPY", "forex")}
 
 
 async def test_cache_start_of_day_balance_success(notifier: RecordingNotifier) -> None:

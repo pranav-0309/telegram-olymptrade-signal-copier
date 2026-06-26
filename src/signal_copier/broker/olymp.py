@@ -44,11 +44,19 @@ _log = logging.getLogger(__name__)
 # olympconfig.parameters constants as a named constant).
 ASSET_LIST_EVENT: int = 1068
 
-# Maximum time to wait for the e:1068 push during connect(). Raised from
-# 15s to 180s (3 min) on 2026-06-26 to give OlympTrade's server more time
-# to respond on slower connections. With 5 reconnect attempts, the worst-
-# case connect-cycle time is ~15 min before Railway restart. If the new
-# JWT scope change addresses the underlying issue, this can drop back.
+# Event code for the e:1054 instrument-list push — the reliable fallback
+# for the asset map. e:1068 is marked "GUESS!" in the vendored library and
+# sometimes never responds (account-scope dependent). e:1054 delivers
+# instrument metadata ({id, title, group, precision, ...}) reliably after
+# the e:98 subscription that includes it.
+INSTRUMENT_LIST_EVENT: int = 1054
+
+# Maximum time to wait for either e:1068 or e:1054 during connect().
+# Raised from 15s to 180s (3 min) on 2026-06-26 to give OlympTrade's
+# server more time to respond on slower connections. With 5 reconnect
+# attempts, the worst-case connect-cycle time is ~15 min before Railway
+# restart. If the new JWT scope change addresses the underlying issue,
+# this can drop back.
 ASSET_MAP_TIMEOUT_SECONDS: float = 180.0
 
 
@@ -126,6 +134,10 @@ class OlympTradeBroker:
         self._pending_lock = asyncio.Lock()
         self._start_of_day_balance: Decimal | None = None
         self._connected = False
+        # Pre-registered Future for the e:1054 instrument list push. Captured
+        # before initialize_session() so we don't miss the push if it arrives
+        # during session setup. Consumed (set once) by _build_asset_map().
+        self._instrument_list_future: asyncio.Future[list[object]] | None = None
 
     def _default_client_factory(self) -> OlympTradeClient:
         return OlympTradeClient(
@@ -158,10 +170,19 @@ class OlympTradeBroker:
         self._client.register_callback(parameters.E_TRADE_ACCEPTED, self._on_trade_accepted)
         self._client.register_callback(parameters.E_TRADE_UPDATE_INTERIM, self._on_trade_interim)
 
-        # 4. Send startup subscriptions + account-info + balance requests
+        # 4. Pre-register e:1054 capture BEFORE initialize_session. The push
+        #    fires shortly after the e:98 subscription that includes it
+        #    (which is sent inside initialize_session). If we register after
+        #    initialize_session returns, we'd miss the push.
+        loop = asyncio.get_running_loop()
+        self._instrument_list_future = loop.create_future()
+        self._client.register_callback(INSTRUMENT_LIST_EVENT, self._on_instrument_list)
+
+        # 5. Send startup subscriptions + account-info + balance requests
         await self._client.initialize_session()  # type: ignore[no-untyped-call]
 
-        # 5. Build the asset map from the e:1068 push
+        # 6. Build the asset map from whichever push arrives first (e:1054
+        #    is the reliable fallback; e:1068 may also respond)
         await self._build_asset_map()
 
         # 6. Guardrail: vendored client must agree with config on account group
@@ -183,56 +204,92 @@ class OlympTradeBroker:
         )
 
     async def _build_asset_map(self) -> None:
-        """One-shot capture of the e:1068 asset list during initialize_session().
+        """Capture the asset list from either e:1054 (instruments) or e:1068
+        (account info), whichever fires first within ASSET_MAP_TIMEOUT_SECONDS.
 
-        The vendored client's initialize_session() triggers an e:1068 push.
-        We capture it via a temporary callback registered before the timeout.
+        e:1054 is the reliable path — it's the actual instrument list and
+        arrives shortly after the e:98 subscription inside initialize_session.
+        e:1068 was the original event used but is marked "GUESS!" in the
+        vendored library and sometimes never responds for some accounts/tokens.
+        Racing both gives us resilience.
 
-        Times out after ASSET_MAP_TIMEOUT_SECONDS. On timeout, every place()
-        will fail. Fail loud.
+        The e:1054 capture is pre-registered in connect() (via _on_instrument_list)
+        so we don't miss the push if it arrives during initialize_session.
+        The e:1068 capture is registered here just-in-time (in case it arrives
+        AFTER initialize_session, like the spec assumed).
         """
         client = self._client
         assert client is not None  # connect() must run before _build_asset_map
 
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[list[object]] = loop.create_future()
+        fut_1068: asyncio.Future[list[object]] = loop.create_future()
 
-        async def capture(message: dict[str, object]) -> None:
-            if not future.done():
+        async def capture_1068(message: dict[str, object]) -> None:
+            if not fut_1068.done():
                 d_value = message.get("d", [])
-                future.set_result(d_value if isinstance(d_value, list) else [])
+                fut_1068.set_result(d_value if isinstance(d_value, list) else [])
 
-        client.register_callback(ASSET_LIST_EVENT, capture)
+        client.register_callback(ASSET_LIST_EVENT, capture_1068)
+        # The pre-registered e:1054 future (may already be done if the push
+        # arrived during initialize_session).
+        assert self._instrument_list_future is not None
+        instrument_future = self._instrument_list_future
+
         try:
-            raw_assets = await asyncio.wait_for(future, timeout=ASSET_MAP_TIMEOUT_SECONDS)
-        except TimeoutError as exc:
-            raise BrokerAuthError(
-                f"asset map: e:1068 push did not arrive within "
-                f"{ASSET_MAP_TIMEOUT_SECONDS:.0f}s of initialize_session()"
-            ) from exc
+            done, pending = await asyncio.wait(
+                {instrument_future, fut_1068},
+                timeout=ASSET_MAP_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel any pending future's wait (the futures themselves are
+            # left in their current state — set or not set).
+            for p in pending:
+                p.cancel()
+
+            if not done:
+                raise BrokerAuthError(
+                    f"asset map: neither e:1068 nor e:1054 push arrived within "
+                    f"{ASSET_MAP_TIMEOUT_SECONDS:.0f}s of initialize_session()"
+                )
+
+            winner = done.pop()
+            raw_assets = winner.result()
+            if winner is instrument_future:
+                event_source = "e:1054 (instruments)"
+            else:
+                event_source = "e:1068 (account info)"
+
+            for asset in raw_assets:
+                if not isinstance(asset, dict):
+                    continue
+                # e:1068 data uses "pair"; e:1054 data uses "id". Try both.
+                broker_pair = asset.get("pair") or asset.get("id")
+                if not isinstance(broker_pair, str):
+                    continue
+                # e:1068 data has "cat"; e:1054 has "group" (different schema).
+                # For e:1054, default to "digital" — the broker accepts
+                # "digital" | "forex" | "stocks" (trade.py:26), and "digital"
+                # is the safe default that works for most assets.
+                category = asset.get("cat")
+                if not isinstance(category, str):
+                    category = "digital"
+                key = _normalize_key(broker_pair)
+                self._assets[key] = (broker_pair, category)
+
+            if not self._assets:
+                raise BrokerAuthError(
+                    f"asset map: {event_source} push arrived but contained no usable assets"
+                )
+
+            _log.info(
+                "asset map built from %s: %d entries (sample: %s)",
+                event_source,
+                len(self._assets),
+                list(self._assets.keys())[:5],
+            )
         finally:
-            client.unregister_callback(ASSET_LIST_EVENT, capture)
-
-        for asset in raw_assets:
-            if not isinstance(asset, dict):
-                continue
-            broker_pair = asset.get("pair")
-            if not isinstance(broker_pair, str):
-                continue
-            category = asset.get("cat", "digital")
-            if not isinstance(category, str):
-                category = "digital"
-            key = _normalize_key(broker_pair)
-            self._assets[key] = (broker_pair, category)
-
-        if not self._assets:
-            raise BrokerAuthError("asset map: e:1068 push arrived but contained no usable assets")
-
-        _log.info(
-            "asset map built: %d entries (sample: %s)",
-            len(self._assets),
-            list(self._assets.keys())[:5],
-        )
+            client.unregister_callback(ASSET_LIST_EVENT, capture_1068)
 
     async def _cache_start_of_day_balance(self) -> None:
         """Read the e:55 balance push and cache it for FR-6.3 drawdown.
@@ -277,6 +334,15 @@ class OlympTradeBroker:
             self._account_group,
         )
         self._start_of_day_balance = None
+
+    async def _on_instrument_list(self, message: dict[str, object]) -> None:
+        """Persistent e:1054 callback. Captures the instrument list push
+        into the pre-registered Future. Idempotent — only sets once.
+        """
+        if self._instrument_list_future is None or self._instrument_list_future.done():
+            return
+        d_value = message.get("d", [])
+        self._instrument_list_future.set_result(d_value if isinstance(d_value, list) else [])
 
     async def _on_trade_closed(self, message: dict[str, object]) -> None:
         """Persistent e:26 callback. Resolves the matching per-trade Future.
@@ -476,4 +542,8 @@ class OlympTradeBroker:
                     if not future.done():
                         future.cancel("OlympTradeBroker closed")
                 self._results.clear()
+            # Cancel any in-flight e:1054 capture (e.g., if close runs during
+            # initialize_session before the push arrived).
+            if self._instrument_list_future is not None and not self._instrument_list_future.done():
+                self._instrument_list_future.cancel("OlympTradeBroker closed")
         _log.info("OlympTradeBroker closed")
