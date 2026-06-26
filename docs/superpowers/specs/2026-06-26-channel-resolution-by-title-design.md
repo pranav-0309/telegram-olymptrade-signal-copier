@@ -128,8 +128,8 @@ class ChannelResolver:
 
 Three surgical changes:
 
-1. **Remove** the `get_entity(target_chat)` call from `connect()`. `connect()` only authenticates and runs `await self._client.connect()`. No more `self._target_chat_id` resolution here.
-2. **Rename the variable semantics** of `target_chat` — keep the parameter name but document it as the title pattern. Add a `_validate_target_chat_nonempty()` check (already implicit in existing constructor; just clarify semantics).
+1. **Remove** the `get_entity(target_chat)` call from `connect()`. `connect()` only authenticates and runs `await self._client.connect()`. No more `self._target_chat_id` resolution here. `connect()` should log: `"TelegramClient connected (target_chat_pattern=<pattern>)"` using `self._target_chat`.
+2. **Rename the variable semantics** of `target_chat` — keep the parameter name but document it as the title pattern. **Add** an explicit non-empty check (existing constructor validates `api_id`, `api_hash`, `phone`, `session_string` but not `target_chat`): `if not target_chat: raise TelegramConfigError("TELEGRAM_TARGET_CHAT is empty; set it in .env to the channel title pattern (e.g. 'Magic Trader Signals')")`.
 3. **Add** a property `raw_client: _TelethonClient` so `ChannelResolver.resolve()` can call `raw_client.get_dialogs()`. Wrapping it in a property documents intent and prevents callers from poking at internals directly.
 
 ```python
@@ -191,6 +191,11 @@ except ChannelAmbiguousError as exc:
     raise TelegramConfigError(
         f"Multiple Telegram dialogs match pattern "
         f"{config.telegram_target_chat!r}: {exc}"
+    ) from exc
+except Exception as exc:  # Telethon errors from get_dialogs() (network/auth/etc.)
+    raise TelegramConfigError(
+        f"Failed to scan Telegram dialogs: "
+        f"{type(exc).__name__}: {exc}"
     ) from exc
 tg.set_resolved_chat_id(resolver.resolved_chat_id)
 
@@ -322,7 +327,7 @@ Re-scanning on every reconnect is intentionally out of scope for v1 — adds com
 | 1 | `TELEGRAM_TARGET_CHAT` empty in `.env` | `TelegramClient.__init__` | `TelegramConfigError` raised | Exit code 2 with actionable message |
 | 2 | Dialog scan: **zero** matches for pattern | `ChannelResolver.resolve` → `ChannelNotFoundError` → `__main__` catches as `TelegramConfigError` | Process refuses to start; Railway auto-restarts (will hit same error repeatedly — user must fix config) | Exit code 2 with message: `"No Telegram dialog matches pattern 'Magic Trader Signals'. Scanned N dialogs. Check TELEGRAM_TARGET_CHAT in .env."` |
 | 3 | Dialog scan: **multiple** matches | `ChannelResolver.resolve` → `ChannelAmbiguousError` → `__main__` catches as `TelegramConfigError` | Process refuses to start | Exit code 2 with list of all matching titles: `"3 dialogs match 'Magic': ['Magic Trader Signals', 'Magic Patterns Chat', 'Magic Hour']. Make the pattern more specific."` |
-| 4 | Telethon `get_dialogs()` raises (network/auth) | `ChannelResolver.resolve` lets exception propagate | Wrapped in `TelegramChannelResolveError` for clarity, then re-raised | Exit code 2 with original Telethon error class + message |
+| 4 | Telethon `get_dialogs()` raises (network/auth) | `__main__.py`'s broad `except Exception` clause wraps it as `TelegramConfigError` | Process refuses to start | Exit code 2 with Telethon error class + message (e.g. `"Failed to scan Telegram dialogs: ConnectionError: …"`) |
 | 5 | Per-event: `event.chat` is None (rare Telethon edge case) | `ChannelResolver.matches` accepts on chat_id alone, logs WARNING | Signal processed (defensible — chat_id matched) | Log line: `"chat_id=X matched but event.chat unavailable; accepting on chat_id alone"` |
 | 6 | Per-event: title drifts (channel renamed mid-run) | `ChannelResolver.matches` returns False; `Listener` drops silently | Message ignored | Log line: `"channel title drift detected: was='…' now='…'; ignoring message_id=N"` (first occurrence per drift, then rate-limited to 1/min/chat_id) |
 | 7 | Per-event: chat_id matches but `event.chat.title` is None | `ChannelResolver.matches` returns False (defensive) | Message ignored | Log line: `"chat_id=X matched but chat has no title; ignoring message_id=N"` |
