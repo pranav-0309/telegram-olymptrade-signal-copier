@@ -185,12 +185,21 @@ class OlympTradeBroker:
         #    is the reliable fallback; e:1068 may also respond)
         await self._build_asset_map()
 
-        # 6. Guardrail: vendored client must agree with config on account group
-        if self._client.account_group != self._account_group:
+        # 6. Guardrail: vendored client must agree with config on account group.
+        # Note: vendored library sets self.account_group only via e:1068
+        # response, which never arrives for some accounts. If client.account_group
+        # is None, trust the config value (we already validated via e:55).
+        if (
+            self._client.account_group is not None
+            and self._client.account_group != self._account_group
+        ):
             raise BrokerAuthError(
                 f"broker reports account_group={self._client.account_group!r} "
                 f"but config says {self._account_group!r}"
             )
+        # Force the config value if client didn't determine it.
+        if self._client.account_group is None:
+            self._client.account_group = self._account_group
 
         # 7. Cache start-of-day balance for FR-6.3 drawdown calculation
         await self._cache_start_of_day_balance()
