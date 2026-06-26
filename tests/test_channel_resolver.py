@@ -63,8 +63,8 @@ def test_init_normalizes_pattern() -> None:
     assert resolver._pattern == "  Magic  Trader  Signals  "
 
 
-def test_init_preserves_empty_pattern_for_error_messages() -> None:
-    """Raw pattern is preserved verbatim — useful in error messages."""
+def test_init_preserves_raw_pattern_unchanged() -> None:
+    """Pattern is stored verbatim while _normalized_pattern is normalized."""
     resolver = ChannelResolver(pattern="MagicTrader")
     assert resolver._pattern == "MagicTrader"
     assert resolver._normalized_pattern == "magictrader"
