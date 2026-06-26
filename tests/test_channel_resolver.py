@@ -188,52 +188,42 @@ async def _resolve_with_id(chat_id: int, title: str) -> ChannelResolver:
     return resolver
 
 
-def test_matches_chat_id_fast_path() -> None:
+async def test_matches_chat_id_fast_path() -> None:
     """event.chat_id == resolved AND title matches → True."""
-    import asyncio
-
-    resolver = asyncio.run(_resolve_with_id(42, "Magic Trader Signals"))
+    resolver = await _resolve_with_id(42, "Magic Trader Signals")
     event = _make_event(chat_id=42, chat_title="Magic Trader Signals")
 
     assert resolver.matches(event) is True
 
 
-def test_matches_rejects_wrong_chat_id() -> None:
+async def test_matches_rejects_wrong_chat_id() -> None:
     """event.chat_id != resolved → False (fast-path, no title check)."""
-    import asyncio
-
-    resolver = asyncio.run(_resolve_with_id(42, "Magic Trader Signals"))
+    resolver = await _resolve_with_id(42, "Magic Trader Signals")
     event = _make_event(chat_id=99, chat_title="Magic Trader Signals")
 
     assert resolver.matches(event) is False
 
 
-def test_matches_rejects_chat_id_match_but_title_drift() -> None:
+async def test_matches_rejects_chat_id_match_but_title_drift() -> None:
     """event.chat_id == resolved but title drifted (rename) → False."""
-    import asyncio
-
-    resolver = asyncio.run(_resolve_with_id(42, "Magic Trader Signals"))
+    resolver = await _resolve_with_id(42, "Magic Trader Signals")
     event = _make_event(chat_id=42, chat_title="Totally Different Channel")
 
     assert resolver.matches(event) is False
 
 
-def test_matches_accepts_when_chat_object_unavailable() -> None:
+async def test_matches_accepts_when_chat_object_unavailable() -> None:
     """event.chat_id == resolved but event.chat is None → True + WARNING logged.
     Edge case: Telethon occasionally delivers events without chat metadata."""
-    import asyncio
-
-    resolver = asyncio.run(_resolve_with_id(42, "Magic Trader Signals"))
+    resolver = await _resolve_with_id(42, "Magic Trader Signals")
     event = _make_event(chat_id=42, chat_title=None)  # sets event.chat = None
 
     assert resolver.matches(event) is True
 
 
-def test_matches_rejects_when_title_is_none() -> None:
+async def test_matches_rejects_when_title_is_none() -> None:
     """event.chat_id == resolved but event.chat.title is None → False."""
-    import asyncio
-
-    resolver = asyncio.run(_resolve_with_id(42, "Magic Trader Signals"))
+    resolver = await _resolve_with_id(42, "Magic Trader Signals")
     event = MagicMock()
     event.chat_id = 42
     chat = MagicMock()
@@ -243,15 +233,21 @@ def test_matches_rejects_when_title_is_none() -> None:
     assert resolver.matches(event) is False
 
 
-def test_matches_uses_normalized_comparison() -> None:
+async def test_matches_uses_normalized_comparison() -> None:
     """Pattern with extra whitespace matches title without extra whitespace."""
-    import asyncio
-
     resolver = ChannelResolver(pattern="  MAGIC  trader  SIGNALS  ")
     dialogs = [_FakeDialog(id=42, title="Magic Trader Signals")]
     client = _FakeTelethonClient(dialogs=dialogs)
-    asyncio.run(resolver.resolve(client))  # type: ignore[arg-type]
+    await resolver.resolve(client)  # type: ignore[arg-type]
 
     event = _make_event(chat_id=42, chat_title="Magic Trader Signals")
 
     assert resolver.matches(event) is True
+
+
+def test_matches_raises_before_resolve() -> None:
+    """matches() must raise RuntimeError if called before resolve()."""
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+    event = _make_event(chat_id=42)
+    with pytest.raises(RuntimeError, match="resolve"):
+        resolver.matches(event)
