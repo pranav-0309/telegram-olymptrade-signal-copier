@@ -111,7 +111,13 @@ Analyst (admin in Telegram group)
 2nd GALE - TIME UNTIL <HH:MM>
 ```
 **FR-2.2** Use an **anchored line regex** strategy (not full-document regex) for robustness against embedded ads and CTAs:
-- Strict pattern for the signal line: `^(?P<pair>[A-Z]{3}/[A-Z]{3});(?P<time>\d{2}:\d{2});(?P<dir>PUT🟥|CALL🟩)\s*$`
+- Pattern for the signal line:
+  ```
+  ^(?P<pair>[A-Z]{3}/[A-Z]{3})\s*;\s*(?P<time>\d{2}:\d{2})\s*;\s*
+  (?P<dir>PUT\s*[\U0001f534\U0001f7e5\U0001f53b]|CALL\s*[\U0001f7e9\U0001f7e2\U0001f53a])\s*$
+  ```
+  - Whitespace tolerated around both `;` separators and between the direction word and the emoji (analyst uses `USD/IDR; 16:35; PUT 🟥` — a production signal that previously failed with the strict pattern).
+  - Direction emoji accepts any of: 🟥 🟩 (squares, original spec), 🔴 🟢 (circles), or 🔻 🔺 (triangles).
 - Validate that the `💰N-minute expiration` line appears in the same message.
 - Tolerate varying whitespace, blank lines, and trailing newlines.
 - Strip trailing UTF-8 BOM if present.

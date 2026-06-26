@@ -58,6 +58,102 @@ def test_signal_line_with_trailing_whitespace_still_parses() -> None:
     assert result.pair == "EUR/JPY"
 
 
+# --- Direction/emoji whitespace tolerance (new) ------------------------
+
+
+def test_signal_with_space_between_put_and_emoji_parses() -> None:
+    """The actual missed signal from 2026-06-26 19:33:29 UTC.
+    Format: 'USD/IDR; 16:35; PUT 🟥' — has SPACE between PUT and 🟥.
+    This was the production failure: header matched, signal line did not.
+    """
+    msg = (
+        "💰5-minute expiration\n"
+        "USD/IDR; 16:35; PUT 🟥\n"
+        "🕐 TIME TO 16:40\n"
+        "1st GALE —> TIME TO\n"
+    )
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+    assert result.direction == "down"
+    assert result.trigger_hhmm == "16:35"
+    assert result.expiration_seconds == 300
+    assert result.gale1_hhmm == "16:40"
+    assert result.gale2_hhmm == "16:45"
+
+
+def test_signal_with_space_between_call_and_emoji_parses() -> None:
+    msg = "💰5-minute expiration\nGBP/USD; 14:30; CALL 🟩\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "up"
+    assert result.trigger_hhmm == "14:30"
+
+
+def test_signal_with_multiple_spaces_between_direction_and_emoji_parses() -> None:
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT  🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "down"
+
+
+# --- Whitespace around semicolons (new) ---------------------------------
+
+
+def test_signal_with_whitespace_around_semicolons_parses() -> None:
+    """Whitespace BEFORE/AFTER the ; separators (analyst does this)."""
+    msg = "💰5-minute expiration\nEUR/JPY ; 10:20 ; PUT🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "EUR/JPY"
+    assert result.trigger_hhmm == "10:20"
+
+
+def test_signal_with_combined_whitespace_parses() -> None:
+    """Whitespace everywhere: separators AND direction/emoji."""
+    msg = "💰5-minute expiration\nUSD/IDR ; 16:35 ; PUT 🟥\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+    assert result.trigger_hhmm == "16:35"
+    assert result.direction == "down"
+
+
+# --- Alternative emoji variants (new) -----------------------------------
+
+
+def test_signal_with_red_circle_emoji_parses() -> None:
+    """🔴 (U+1F534) LARGE RED CIRCLE — analyst uses this sometimes."""
+    msg = "💰5-minute expiration\nCAD/CHF;12:05;PUT🔴\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "down"
+
+
+def test_signal_with_green_circle_emoji_parses() -> None:
+    """🟢 (U+1F7E6) LARGE GREEN CIRCLE."""
+    msg = "💰5-minute expiration\nCAD/CHF;12:05;CALL🟢\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "up"
+
+
+def test_signal_with_red_triangle_emoji_parses() -> None:
+    """🔻 (U+1F53B) DOWN-POINTING RED TRIANGLE."""
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🔻\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "down"
+
+
+def test_signal_with_green_triangle_emoji_parses() -> None:
+    """🔺 (U+1F53C) UP-POINTING RED TRIANGLE — used for CALL direction."""
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;CALL🔺\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.direction == "up"
+
+
 def test_message_with_leading_blank_lines_parses() -> None:
     msg = "\n\n💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
@@ -163,8 +259,8 @@ def test_message_with_no_semicolon_in_signal_returns_missing_signal_failure() ->
 
 
 def test_message_with_wrong_emoji_direction_returns_missing_signal_failure() -> None:
-    # 🔻 (U+1F53B) instead of 🟥 — regex rejects
-    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🔻\n"
+    # 🚀 (U+1F680) — definitely not a direction marker
+    msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🚀\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)
     assert isinstance(result, ParseFailure)
     assert result.reason == FailureReason.MISSING_SIGNAL_LINE

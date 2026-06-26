@@ -72,8 +72,21 @@ _HEADER_RE: Final[re.Pattern[str]] = re.compile(
     re.MULTILINE,
 )
 
+# Signal line pattern. Tolerances documented in the planner notes:
+#   - whitespace around the `;` separators (analyst uses both `;` and ` ; `)
+#   - whitespace between the direction word and the direction emoji
+#     (analyst uses both `PUT🟥` and `PUT 🟥`; the latter was the
+#     production failure that motivated this fix)
+#   - alternative direction emojis (circle, triangle) in addition to
+#     the documented square. Grouped in a character class so each
+#     direction accepts any of the three acceptable markers.
 _SIGNAL_LINE_RE: Final[re.Pattern[str]] = re.compile(
-    r"^(?P<pair>[A-Z]{3}/[A-Z]{3});(?P<time>\d{2}:\d{2});(?P<dir>PUT\U0001f7e5|CALL\U0001f7e9)\s*$",
+    r"^(?P<pair>[A-Z]{3}/[A-Z]{3})\s*;\s*"
+    r"(?P<time>\d{2}:\d{2})\s*;\s*"
+    r"(?P<dir>"
+    r"PUT\s*[\U0001f534\U0001f7e5\U0001f53b]|"
+    r"CALL\s*[\U0001f7e9\U0001f7e2\U0001f53a]"
+    r")\s*$",
     re.MULTILINE,
 )
 
@@ -127,10 +140,14 @@ def parse_signal(
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return ParseFailure(FailureReason.BAD_TIME_FORMAT, raw_text)
 
-    # Map PUT/CALL to direction
-    if direction_str == "PUT\U0001f7e5":
+    # Map PUT/CALL to direction. The direction_str starts with the
+    # word and is followed by one of the accepted direction emojis
+    # (see _SIGNAL_LINE_RE above). We check the leading word, not an
+    # exact string match, so all three PUT-emoji variants and all
+    # three CALL-emoji variants route correctly.
+    if direction_str.startswith("PUT"):
         direction: Literal["up", "down"] = "down"
-    elif direction_str == "CALL\U0001f7e9":
+    elif direction_str.startswith("CALL"):
         direction = "up"
     else:  # pragma: no cover — regex makes this unreachable
         return ParseFailure(FailureReason.BAD_DIRECTION, raw_text)
