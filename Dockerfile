@@ -1,5 +1,6 @@
 FROM python:3.13
 
+# Cache bust: 2026-06-26 force rebuild for e:1054 fix
 WORKDIR /app
 
 # Install uv
