@@ -251,3 +251,44 @@ def test_matches_raises_before_resolve() -> None:
     event = _make_event(chat_id=42)
     with pytest.raises(RuntimeError, match="resolve"):
         resolver.matches(event)
+
+
+# --- Property guard tests ------------------------------------------------
+
+
+def test_resolved_chat_id_property_raises_before_resolve() -> None:
+    """Accessing resolved_chat_id before resolve() → RuntimeError."""
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+    with pytest.raises(RuntimeError, match="resolve"):
+        _ = resolver.resolved_chat_id
+
+
+def test_captured_title_property_raises_before_resolve() -> None:
+    """Accessing captured_title before resolve() → RuntimeError."""
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+    with pytest.raises(RuntimeError, match="resolve"):
+        _ = resolver.captured_title
+
+
+# --- Telethon exception propagation --------------------------------------
+
+
+async def test_resolve_propagates_telethon_exceptions() -> None:
+    """If get_dialogs() raises (network/auth), the exception propagates
+    unchanged — __main__.py wraps it as TelegramConfigError."""
+    client = _FakeTelethonClient()
+    client.raise_on_get_dialogs = ConnectionError("telegram server unreachable")
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    with pytest.raises(ConnectionError, match="telegram server unreachable"):
+        await resolver.resolve(client)  # type: ignore[arg-type]
+
+
+async def test_resolve_propagates_telethon_auth_error() -> None:
+    """AuthKeyError-like exceptions propagate unchanged."""
+    client = _FakeTelethonClient()
+    client.raise_on_get_dialogs = RuntimeError("AuthKeyError: key revoked")
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    with pytest.raises(RuntimeError, match="AuthKeyError"):
+        await resolver.resolve(client)  # type: ignore[arg-type]
