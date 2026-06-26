@@ -44,6 +44,13 @@ _log = logging.getLogger(__name__)
 # olympconfig.parameters constants as a named constant).
 ASSET_LIST_EVENT: int = 1068
 
+# Maximum time to wait for the e:1068 push during connect(). Raised from
+# 15s to 180s (3 min) on 2026-06-26 to give OlympTrade's server more time
+# to respond on slower connections. With 5 reconnect attempts, the worst-
+# case connect-cycle time is ~15 min before Railway restart. If the new
+# JWT scope change addresses the underlying issue, this can drop back.
+ASSET_MAP_TIMEOUT_SECONDS: float = 180.0
+
 
 def _normalize_key(broker_pair: str) -> str:
     """Convert broker-internal pair string to the slash form used in signals.
@@ -133,7 +140,7 @@ class OlympTradeBroker:
 
         Idempotent: a second call is a no-op. Raises BrokerAuthError if:
           - vendored client's WS start fails (auth rejected, network error)
-          - asset map (e:1068 push) doesn't arrive within 15s
+          - asset map (e:1068 push) doesn't arrive within ASSET_MAP_TIMEOUT_SECONDS
           - asset map arrives but contains no usable assets
           - account_group reported by broker != configured account_group
         """
@@ -181,7 +188,8 @@ class OlympTradeBroker:
         The vendored client's initialize_session() triggers an e:1068 push.
         We capture it via a temporary callback registered before the timeout.
 
-        Times out after 15s. On timeout, every place() will fail. Fail loud.
+        Times out after ASSET_MAP_TIMEOUT_SECONDS. On timeout, every place()
+        will fail. Fail loud.
         """
         client = self._client
         assert client is not None  # connect() must run before _build_asset_map
@@ -196,10 +204,11 @@ class OlympTradeBroker:
 
         client.register_callback(ASSET_LIST_EVENT, capture)
         try:
-            raw_assets = await asyncio.wait_for(future, timeout=15.0)
+            raw_assets = await asyncio.wait_for(future, timeout=ASSET_MAP_TIMEOUT_SECONDS)
         except TimeoutError as exc:
             raise BrokerAuthError(
-                "asset map: e:1068 push did not arrive within 15s of initialize_session()"
+                f"asset map: e:1068 push did not arrive within "
+                f"{ASSET_MAP_TIMEOUT_SECONDS:.0f}s of initialize_session()"
             ) from exc
         finally:
             client.unregister_callback(ASSET_LIST_EVENT, capture)

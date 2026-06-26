@@ -13,6 +13,7 @@ from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.olymp import (
     ASSET_LIST_EVENT,
+    ASSET_MAP_TIMEOUT_SECONDS,
     OlympTradeBroker,
     _map_status,
     _normalize_key,
@@ -32,6 +33,16 @@ def _attach_fake_client(broker: OlympTradeBroker, fake: FakeOlympTradeClient) ->
 
 def test_normalize_key_handles_plain() -> None:
     assert _normalize_key("EURJPY") == "EUR/JPY"
+
+
+def test_asset_map_timeout_constant_is_180s() -> None:
+    """Guard against accidental future edits to the timeout.
+
+    Raised from 15s to 180s on 2026-06-26 to give OlympTrade's server more
+    time to respond for the new JWT. If this fails, review whether the
+    underlying slowness has been resolved before lowering.
+    """
+    assert ASSET_MAP_TIMEOUT_SECONDS == 180.0
 
 
 def test_normalize_key_handles_otc_suffix() -> None:
@@ -188,9 +199,9 @@ async def test_build_asset_map_populates_assets(notifier: RecordingNotifier) -> 
 async def test_build_asset_map_timeout_raises_broker_auth_error(
     notifier: RecordingNotifier,
 ) -> None:
-    """No e:1068 push within 15s → BrokerAuthError.
+    """No e:1068 push within ASSET_MAP_TIMEOUT_SECONDS → BrokerAuthError.
 
-    We patch asyncio.wait_for to simulate the timeout without actually waiting 15s.
+    We patch asyncio.wait_for to simulate the timeout without actually waiting.
     """
     fake_client = FakeOlympTradeClient()
     broker = _make_broker(notifier, fake_client=fake_client)
