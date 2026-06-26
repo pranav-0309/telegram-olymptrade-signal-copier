@@ -21,7 +21,11 @@ class Config(BaseSettings):
     telegram_api_hash: str = ""
     telegram_phone: str = ""
     telegram_session_string: str = ""
-    telegram_target_chat: str = "@analyst_channel"
+    # Channel title pattern (case-insensitive substring, whitespace-normalized).
+    # The bot scans the user's dialog list at startup and refuses to start
+    # unless exactly one channel title contains this pattern.
+    # Example: "Magic Trader Signals" (matches "📈 Magic Trader Signals 🚀").
+    telegram_target_chat: str = "Magic Trader Signals"
     telegram_self_dm_notifications: bool = True
 
     # --- OlympTrade (not used by M2, declared for schema completeness) ----
