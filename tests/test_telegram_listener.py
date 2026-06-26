@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -35,17 +35,31 @@ def _config() -> Config:
     )
 
 
+class _FakeChannelResolver:
+    """Drop-in for ChannelResolver — configurable matches() return value."""
+
+    def __init__(self, *, returns: bool = True) -> None:
+        self._returns = returns
+        self.calls: list[Any] = []
+
+    def matches(self, event: Any) -> bool:
+        self.calls.append(event)
+        return self._returns
+
+
 def _listener(
     *,
     state_store: FakeStateStore,
     queue: asyncio.Queue[Signal],
     config: Config | None = None,
-    target_chat_id: int = 42,
+    channel_resolver: _FakeChannelResolver | None = None,
     parse_failures_logger: logging.Logger | None = None,
     notifier: NoOpNotifier | RecordingNotifier | None = None,
 ) -> Listener:
+    if channel_resolver is None:
+        channel_resolver = _FakeChannelResolver(returns=True)
     return Listener(
-        target_chat_id=target_chat_id,
+        channel_resolver=channel_resolver,
         state_store=state_store,  # type: ignore[arg-type]  # FakeStateStore is duck-typed
         queue=queue,
         config=config or _config(),
@@ -253,10 +267,11 @@ async def test_out_of_window_within_tolerance_accepted() -> None:
 async def test_wrong_chat_filtered_silently() -> None:
     state = FakeStateStore()
     queue: asyncio.Queue[Signal] = asyncio.Queue()
-    listener = _listener(state_store=state, queue=queue, target_chat_id=42)
+    resolver = _FakeChannelResolver(returns=False)
+    listener = _listener(state_store=state, queue=queue, channel_resolver=resolver)
 
     text = _within_window_signal_text(seconds_from_now=60)
-    event = make_event(text=text, chat_id=999, message_id=1)
+    event = make_event(text=text, chat_id=999, chat_title="X", message_id=1)
     await listener.on_new_message(event)
 
     assert state.upserted == []
@@ -363,7 +378,7 @@ async def test_listener_emits_on_parse_failure_on_invalid_message() -> None:
     notifier = RecordingNotifier()
     config = Config(timezone="America/Sao_Paulo")
     listener = Listener(
-        target_chat_id=-100,
+        channel_resolver=_FakeChannelResolver(returns=True),
         state_store=cast(StateStore, FakeStateStore()),
         queue=asyncio.Queue(),
         config=config,
@@ -381,7 +396,7 @@ async def test_listener_does_not_emit_on_parse_failure_for_valid_signal() -> Non
     notifier = RecordingNotifier()
     config = Config(timezone="America/Sao_Paulo")
     listener = Listener(
-        target_chat_id=-100,
+        channel_resolver=_FakeChannelResolver(returns=True),
         state_store=cast(StateStore, FakeStateStore()),
         queue=asyncio.Queue(),
         config=config,
@@ -392,3 +407,103 @@ async def test_listener_does_not_emit_on_parse_failure_for_valid_signal() -> Non
     await listener.on_new_message(good_event)
 
     assert not any(call[0] == "on_parse_failure" for call in notifier.calls)
+
+
+# --- Listener uses ChannelResolver instead of raw chat_id ---------------
+
+
+async def test_listener_invokes_resolver_matches() -> None:
+    """Listener delegates the chat filter to channel_resolver.matches()."""
+    state = FakeStateStore()
+    queue: asyncio.Queue[Signal] = asyncio.Queue()
+    resolver = _FakeChannelResolver(returns=True)
+
+    listener = Listener(
+        channel_resolver=resolver,  # type: ignore[arg-type]
+        state_store=state,  # type: ignore[arg-type]
+        queue=queue,
+        config=_config(),
+        parse_failures_logger=NullLogger(),
+        notifier=NoOpNotifier(),
+    )
+    event = make_event(text="hello", chat_id=42, chat_title="X")
+
+    await listener._process_message(event)
+
+    assert len(resolver.calls) == 1
+    assert resolver.calls[0] is event
+
+
+async def test_listener_drops_event_when_resolver_says_no() -> None:
+    """If channel_resolver.matches() returns False, Listener drops the event
+    without invoking the parser or the state store."""
+    state = FakeStateStore()
+    queue: asyncio.Queue[Signal] = asyncio.Queue()
+    resolver = _FakeChannelResolver(returns=False)
+
+    listener = Listener(
+        channel_resolver=resolver,  # type: ignore[arg-type]
+        state_store=state,  # type: ignore[arg-type]
+        queue=queue,
+        config=_config(),
+        parse_failures_logger=NullLogger(),
+        notifier=NoOpNotifier(),
+    )
+    event = make_event(
+        text=VALID_SIGNAL_TEXT,
+        chat_id=42,
+        chat_title="Magic Trader Signals",
+    )
+    await listener._process_message(event)
+
+    assert state.upserted == []
+    assert queue.qsize() == 0
+
+
+async def test_listener_processes_event_when_resolver_says_yes() -> None:
+    """If channel_resolver.matches() returns True, Listener runs the full
+    parse + persist + enqueue pipeline."""
+    state = FakeStateStore()
+    queue: asyncio.Queue[Signal] = asyncio.Queue()
+    resolver = _FakeChannelResolver(returns=True)
+
+    listener = Listener(
+        channel_resolver=resolver,  # type: ignore[arg-type]
+        state_store=state,  # type: ignore[arg-type]
+        queue=queue,
+        config=_config(),
+        parse_failures_logger=NullLogger(),
+        notifier=NoOpNotifier(),
+    )
+    text = _within_window_signal_text()
+    event = make_event(
+        text=text,
+        chat_id=42,
+        chat_title="Magic Trader Signals",
+    )
+    await listener._process_message(event)
+
+    assert len(state.upserted) == 1
+    assert queue.qsize() == 1
+
+
+async def test_listener_does_not_check_chat_id_directly() -> None:
+    """The Listener must not compare chat_id to a stored int — that
+    responsibility moved to ChannelResolver.matches()."""
+    state = FakeStateStore()
+    queue: asyncio.Queue[Signal] = asyncio.Queue()
+    resolver = _FakeChannelResolver(returns=False)  # always reject
+
+    listener = Listener(
+        channel_resolver=resolver,  # type: ignore[arg-type]
+        state_store=state,  # type: ignore[arg-type]
+        queue=queue,
+        config=_config(),
+        parse_failures_logger=NullLogger(),
+        notifier=NoOpNotifier(),
+    )
+    event = make_event(text="x", chat_id=42, chat_title="X")
+    await listener._process_message(event)
+
+    # Resolver rejected → no parse, no store
+    assert state.upserted == []

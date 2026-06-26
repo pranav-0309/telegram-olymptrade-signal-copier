@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from signal_copier.config import Config
 from signal_copier.domain.signal import (
@@ -22,6 +22,9 @@ from signal_copier.infra.clock import (
 from signal_copier.infra.state_store import StateStore
 from signal_copier.notify.protocol import Notifier
 
+if TYPE_CHECKING:
+    from signal_copier.telegram.channel_resolver import ChannelResolver
+
 _log = logging.getLogger(__name__)
 
 
@@ -31,8 +34,8 @@ def _allowed_expirations(config: Config) -> frozenset[int]:
 
 class Listener:
     """Wires Telethon NewMessage/MessageEdited events into the M1 parser
-    and M4 StateStore. Filter-aware: only `chat_id == target` and
-    non-outgoing messages are processed. A successful parse goes through
+    and M4 StateStore. Filter-aware: only events matching `channel_resolver`
+    and non-outgoing messages are processed. A successful parse goes through
     the M1 parser, the M5 time-window check, M4's StateStore.upsert_signal,
     and finally lands on the asyncio.Queue for M6 (or M5's dump_consumer)
     to drain.
@@ -41,14 +44,14 @@ class Listener:
     def __init__(
         self,
         *,
-        target_chat_id: int,
+        channel_resolver: ChannelResolver,
         state_store: StateStore,
         queue: asyncio.Queue[Signal],
         config: Config,
         parse_failures_logger: logging.Logger,
         notifier: Notifier,
     ) -> None:
-        self._target_chat_id = target_chat_id
+        self._channel_resolver = channel_resolver
         self._state_store = state_store
         self._queue = queue
         self._config = config
@@ -66,8 +69,9 @@ class Listener:
         # D-14: skip bot's own outgoing messages
         if event.message.out:
             return
-        # D-13: chat filter (the ONLY filter — no sender allowlist per R-14)
-        if event.chat_id != self._target_chat_id:
+        # D-13: chat filter delegated to ChannelResolver (handles chat_id
+        # fast-path + defensive title re-verification for rename detection)
+        if not self._channel_resolver.matches(event):
             return
 
         text: str = event.text or ""

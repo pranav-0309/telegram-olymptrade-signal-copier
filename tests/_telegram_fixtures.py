@@ -31,17 +31,25 @@ def make_event(
     chat_id: int,
     message_id: int = 1,
     outgoing: bool = False,
+    chat_title: str | None = "Test Channel",
 ) -> Any:
     """Build a synthetic Telethon NewMessage.Event.
 
     Only the attributes Listener reads are populated. Tests can call
     listener.on_new_message(make_event(...)) and assert on the side
     effects (queue contents, upsert_signal calls, parse_failures logs).
+
+    `chat_title` controls event.chat.title (or sets event.chat = None
+    if chat_title is None). Used by ChannelResolver tests.
     """
     event = MagicMock()
     event.text = text
     event.chat_id = chat_id
     event.message = _StubMessage(message_id=message_id, outgoing=outgoing)
+    if chat_title is None:
+        event.chat = None
+    else:
+        event.chat.title = chat_title
     return event
 
 
