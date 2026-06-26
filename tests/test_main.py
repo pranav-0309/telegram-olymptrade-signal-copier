@@ -191,6 +191,7 @@ async def test_main_creates_scheduler_task(
     monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
     monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "true")
     from signal_copier.config import Config
 
     config = Config()
@@ -254,6 +255,7 @@ async def test_main_emits_bot_started_and_stopping(
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
     monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
     monkeypatch.setenv("TELEGRAM_SELF_DM_NOTIFICATIONS", "false")
+    monkeypatch.setenv("DRY_RUN", "true")
     from signal_copier.config import Config
 
     config = Config()
