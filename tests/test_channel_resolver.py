@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from signal_copier.telegram.channel_resolver import (
+    ChannelAmbiguousError,
+    ChannelNotFoundError,
     ChannelResolver,
 )
 
@@ -68,3 +72,105 @@ def test_init_preserves_raw_pattern_unchanged() -> None:
     resolver = ChannelResolver(pattern="MagicTrader")
     assert resolver._pattern == "MagicTrader"
     assert resolver._normalized_pattern == "magictrader"
+
+
+# --- resolve() tests -----------------------------------------------------
+
+
+async def test_resolve_returns_chat_id_when_one_match() -> None:
+    """Mock get_dialogs() returns 5 dialogs incl. one matching → returns its
+    ID and stores the exact title."""
+    dialogs = [
+        _FakeDialog(id=1, title="Random Group"),
+        _FakeDialog(id=2, title="Magic Trader Signals 🚀"),
+        _FakeDialog(id=3, title="Family Chat"),
+        _FakeDialog(id=4, title="Work Team"),
+        _FakeDialog(id=5, title=None),  # edge: no title
+    ]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    chat_id = await resolver.resolve(client)  # type: ignore[arg-type]
+
+    assert chat_id == 2
+    assert resolver.resolved_chat_id == 2
+    assert resolver.captured_title == "Magic Trader Signals 🚀"
+    assert client.get_dialogs_calls == 1
+
+
+async def test_resolve_raises_ChannelNotFoundError_on_zero_matches() -> None:
+    """Empty dialog list → ChannelNotFoundError mentioning pattern."""
+    client = _FakeTelethonClient(dialogs=[])
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    with pytest.raises(ChannelNotFoundError, match="Magic Trader Signals"):
+        await resolver.resolve(client)  # type: ignore[arg-type]
+
+
+async def test_resolve_raises_ChannelNotFoundError_with_scanned_count() -> None:
+    """Error message includes scanned dialog count for actionable diagnostics."""
+    dialogs = [
+        _FakeDialog(id=1, title="Other Channel"),
+        _FakeDialog(id=2, title="Another Channel"),
+        _FakeDialog(id=3, title="Yet Another"),
+    ]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    with pytest.raises(ChannelNotFoundError, match="Scanned 3 dialogs"):
+        await resolver.resolve(client)  # type: ignore[arg-type]
+
+
+async def test_resolve_raises_ChannelAmbiguousError_on_multiple_matches() -> None:
+    """2 dialogs match → ChannelAmbiguousError listing both titles."""
+    dialogs = [
+        _FakeDialog(id=1, title="Magic Patterns Chat"),
+        _FakeDialog(id=2, title="Magic Hour"),
+        _FakeDialog(id=3, title="Daily News"),
+    ]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="Magic")
+
+    with pytest.raises(ChannelAmbiguousError) as excinfo:
+        await resolver.resolve(client)  # type: ignore[arg-type]
+    msg = str(excinfo.value)
+    assert "2 dialogs" in msg
+    assert "Magic Patterns Chat" in msg
+    assert "Magic Hour" in msg
+
+
+async def test_resolve_is_case_insensitive() -> None:
+    """Dialog title 'MAGIC TRADER SIGNALS' matches pattern 'magic trader'."""
+    dialogs = [_FakeDialog(id=42, title="MAGIC TRADER SIGNALS")]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="magic trader")
+
+    chat_id = await resolver.resolve(client)  # type: ignore[arg-type]
+
+    assert chat_id == 42
+
+
+async def test_resolve_ignores_titles_with_none() -> None:
+    """Dialog with title=None doesn't crash; just excluded from matches."""
+    dialogs = [
+        _FakeDialog(id=1, title=None),
+        _FakeDialog(id=2, title="Magic Trader Signals"),
+        _FakeDialog(id=3, title=None),
+    ]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    chat_id = await resolver.resolve(client)  # type: ignore[arg-type]
+
+    assert chat_id == 2
+
+
+async def test_resolve_collapses_whitespace_in_dialog_title() -> None:
+    """Dialog title with extra whitespace still matches after normalization."""
+    dialogs = [_FakeDialog(id=7, title="Magic   Trader   Signals")]
+    client = _FakeTelethonClient(dialogs=dialogs)
+    resolver = ChannelResolver(pattern="Magic Trader Signals")
+
+    chat_id = await resolver.resolve(client)  # type: ignore[arg-type]
+
+    assert chat_id == 7
