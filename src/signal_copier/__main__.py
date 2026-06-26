@@ -20,6 +20,11 @@ from signal_copier.infra.log import setup_logging, setup_parse_failures_log
 from signal_copier.notify.protocol import NoOpNotifier, Notifier
 from signal_copier.notify.telegram_dm import TelegramDMNotifier
 from signal_copier.scheduler.trigger import Scheduler
+from signal_copier.telegram.channel_resolver import (
+    ChannelAmbiguousError,
+    ChannelNotFoundError,
+    ChannelResolver,
+)
 from signal_copier.telegram.client import TelegramClient, TelegramConfigError
 from signal_copier.telegram.listener import Listener
 
@@ -60,6 +65,24 @@ async def _run(config: Config) -> int:
         )
         await tg.connect()
 
+        resolver = ChannelResolver(pattern=config.telegram_target_chat)
+        try:
+            await resolver.resolve(tg.raw_client)
+        except ChannelNotFoundError as err:
+            raise TelegramConfigError(
+                f"No Telegram dialog matches pattern " f"{config.telegram_target_chat!r}: {err}"
+            ) from err
+        except ChannelAmbiguousError as err:
+            raise TelegramConfigError(
+                f"Multiple Telegram dialogs match pattern "
+                f"{config.telegram_target_chat!r}: {err}"
+            ) from err
+        except Exception as err:
+            raise TelegramConfigError(
+                f"Failed to scan Telegram dialogs: " f"{type(err).__name__}: {err}"
+            ) from err
+        tg.set_resolved_chat_id(resolver.resolved_chat_id)
+
         if config.telegram_self_dm_notifications:
             notifier = TelegramDMNotifier(tg_client=tg, config=config)
             _log.info("Notifications: TelegramDMNotifier (self-DM enabled)")
@@ -91,7 +114,7 @@ async def _run(config: Config) -> int:
         parse_failures = setup_parse_failures_log(config.log_path.parent)
 
         listener = Listener(
-            target_chat_id=tg.target_chat_id,
+            channel_resolver=resolver,
             state_store=db.state_store,
             queue=signals_queue,
             config=config,

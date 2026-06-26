@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,36 @@ from signal_copier import __main__ as m5_main
 from signal_copier.broker.base import BrokerAuthError
 from signal_copier.config import Config
 from signal_copier.infra.db import DatabaseConnectionError
+
+# --- ChannelResolver integration helpers ---------------------------------
+
+
+@dataclass(slots=True)
+class _FakeDialog:
+    """Minimal stand-in for a Telethon Dialog (id + title only)."""
+
+    id: int
+    title: str
+
+
+def _stub_telegram_with_dialogs(
+    fake_tg: MagicMock,
+    dialogs: list[_FakeDialog] | None = None,
+) -> None:
+    """Configure fake_tg so ChannelResolver.resolve() can succeed.
+
+    Wires `fake_tg.raw_client.get_dialogs()` to return `dialogs` (defaults
+    to one dialog titled '@test' matching the default TELEGRAM_TARGET_CHAT).
+    Also stubs `set_resolved_chat_id` so __main__ can inject the resolved
+    chat_id without error. Existing tests use TELEGRAM_TARGET_CHAT='@test',
+    so the default dialog title contains '@test' (substring match after
+    ChannelResolver's whitespace + lowercase normalization).
+    """
+    if dialogs is None:
+        dialogs = [_FakeDialog(id=-100, title="@test")]
+    fake_tg.raw_client = MagicMock()
+    fake_tg.raw_client.get_dialogs = AsyncMock(return_value=dialogs)
+    fake_tg.set_resolved_chat_id = MagicMock()
 
 
 def test_main_returns_2_on_config_validation_error(
@@ -121,6 +152,7 @@ async def test_main_no_dump_consumer_in_m6(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
     fake_scheduler = MagicMock()
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 0
@@ -174,6 +206,7 @@ async def test_main_creates_scheduler_task(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
     fake_scheduler = MagicMock()
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 0
@@ -238,6 +271,7 @@ async def test_main_emits_bot_started_and_stopping(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
     fake_scheduler = MagicMock()
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 2
@@ -310,6 +344,7 @@ async def test_main_picks_dry_run_broker_when_dry_run_true(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
     fake_scheduler = MagicMock()
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 0
@@ -360,6 +395,7 @@ async def test_main_picks_olymp_broker_when_dry_run_false_with_token(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
     fake_scheduler = MagicMock()
     fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.active_task_count = 0
@@ -440,6 +476,7 @@ async def test_main_returns_2_when_olymp_broker_auth_error(
     fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
     fake_tg.connect = AsyncMock()
     fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(fake_tg)
 
     fake_olymp_broker = MagicMock()
     fake_olymp_broker.connect = AsyncMock(side_effect=BrokerAuthError("token rejected"))
@@ -455,3 +492,156 @@ async def test_main_returns_2_when_olymp_broker_auth_error(
 
         with pytest.raises(BrokerAuthError):
             await __main__._run(Config())
+
+
+# --- ChannelResolver integration in __main__ -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_main_exits_2_when_no_channel_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ChannelResolver finds 0 dialog matches → TelegramConfigError."""
+    from signal_copier.telegram.client import TelegramConfigError
+
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "Magic Trader Signals")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
+
+    from signal_copier import __main__
+
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+    fake_tg.set_resolved_chat_id = MagicMock()
+    fake_tg.raw_client = MagicMock()
+    fake_tg.raw_client.get_dialogs = AsyncMock(return_value=[])  # 0 matches
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient", return_value=fake_tg),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+
+        with pytest.raises(TelegramConfigError, match="No Telegram dialog matches"):
+            await __main__._run(Config())
+
+
+@pytest.mark.asyncio
+async def test_main_exits_2_when_multiple_channels_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ChannelResolver finds >1 dialog matches → TelegramConfigError."""
+    from signal_copier.telegram.client import TelegramConfigError
+
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "Magic")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
+
+    from signal_copier import __main__
+
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+    fake_tg.set_resolved_chat_id = MagicMock()
+    fake_tg.raw_client = MagicMock()
+    fake_tg.raw_client.get_dialogs = AsyncMock(
+        return_value=[
+            _FakeDialog(id=1, title="Magic Patterns"),
+            _FakeDialog(id=2, title="Magic Hour"),
+        ]
+    )
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient", return_value=fake_tg),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+
+        with pytest.raises(TelegramConfigError, match="Multiple Telegram dialogs"):
+            await __main__._run(Config())
+
+
+@pytest.mark.asyncio
+async def test_main_bot_started_dm_includes_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """on_bot_started is called with the pattern (not a chat_id) as `watching`."""
+    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
+    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
+    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
+    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "Magic Trader Signals")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
+    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
+    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
+    monkeypatch.setenv("TELEGRAM_SELF_DM_NOTIFICATIONS", "false")
+
+    from signal_copier import __main__
+    from tests._scheduler_fixtures import RecordingNotifier
+
+    fake_notifier = RecordingNotifier()
+    fake_db = MagicMock()
+    fake_db.state_store = MagicMock()
+    fake_db.state_store.get_active_signals = AsyncMock(return_value=[])
+    fake_db.close = AsyncMock()
+    fake_tg = MagicMock()
+    fake_tg.target_chat_id = -100
+    fake_tg.start = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_tg.connect = AsyncMock()
+    fake_tg.close = AsyncMock()
+    _stub_telegram_with_dialogs(
+        fake_tg,
+        dialogs=[_FakeDialog(id=-1001234567890, title="Magic Trader Signals")],
+    )
+    fake_scheduler = MagicMock()
+    fake_scheduler.run = AsyncMock(side_effect=asyncio.CancelledError)
+    fake_scheduler.active_task_count = 0
+
+    with (
+        patch.object(__main__, "Database") as MockDatabase,
+        patch.object(__main__, "TelegramClient") as MockTelegramClient,
+        patch.object(__main__, "DryRunBroker") as MockBroker,
+        patch.object(__main__, "Scheduler", return_value=fake_scheduler),
+        patch.object(__main__, "NoOpNotifier", return_value=fake_notifier),
+    ):
+        MockDatabase.connect = AsyncMock(return_value=fake_db)
+        MockTelegramClient.return_value = fake_tg
+        MockBroker.return_value.connect = AsyncMock()
+        MockBroker.return_value.close = AsyncMock()
+
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(__main__._run(Config()), timeout=1.0)
+
+    bot_started_calls = [c for m, c in fake_notifier.calls if m == "on_bot_started"]
+    assert bot_started_calls, "on_bot_started should have been called"
+    assert bot_started_calls[-1]["watching"] == "Magic Trader Signals"
