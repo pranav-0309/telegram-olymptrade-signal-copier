@@ -93,7 +93,7 @@ Analyst (admin in Telegram group)
 
 **FR-1.1** Connect to a Telegram user account using MTProto (Telethon).
 **FR-1.2** Authenticate once interactively (phone + code + 2FA), then load a persistent `StringSession` so subsequent runs need no interactive prompt.
-**FR-1.3** Watch exactly one channel/group (configured by `@username` or numeric `chat_id`).
+**FR-1.3** Watch exactly one channel/group whose **title** matches the configured pattern (case-insensitive substring after whitespace normalization). The pattern is set via the `TELEGRAM_TARGET_CHAT` env var (the variable name is preserved for compatibility; its semantics change from "chat reference" to "title pattern"). At startup, the user's dialog list is scanned and the bot refuses to start unless **exactly one** dialog matches (zero → `ChannelNotFoundError`; more than one → `ChannelAmbiguousError`). At runtime, every incoming event is double-filtered: fast-path by the resolved `chat_id`, then defensively re-verified by title to detect channel renames mid-session. Renames cause messages to be silently dropped with a WARNING log; the user must restart the bot to re-scan dialogs.
 **FR-1.4** **No sender-allowlist check.** The Telegram channel is admin-only by platform design — only the analyst can post messages. The bot is a member, not a participant, so it cannot post. The parser's strict regex (§4.2) is the sole defense-in-depth against malformed messages.
 **FR-1.5** Accept both `NewMessage` and `MessageEdited` events (so edited signals are picked up).
 **FR-1.6** Emit a structured `Signal` event into an `asyncio.Queue` for the scheduler.
@@ -245,7 +245,7 @@ All notifications go via **Telegram DM to the bot's own user account** ("Send me
 | Telegram disconnect | `🔌 Telegram disconnected. Reconnecting…` | On `ConnectionError` |
 | OlympTrade disconnect | `🔌 OlympTrade disconnected. Process will exit; supervisor will restart.` | On WS close |
 | Parse failure | `⚠️ Skipped message (not a valid signal)\n` `Reason: …\n` `Preview: <first 80 chars>` | On regex mismatch |
-| Bot startup | `🟢 Bot started\n` `Mode: dry_run / live demo\n` `Watching: @channel\n` `Timezone: America/Sao_Paulo` | On `__main__` boot |
+| Bot startup | `🟢 Bot started\n` `Mode: dry_run / live demo\n` `Watching: <title-pattern>\n` `Timezone: America/Sao_Paulo` | On `__main__` boot |
 | Bot shutdown | `🔴 Bot stopping\n` `Open cascades: N` | On SIGINT/SIGTERM |
 
 **FR-7.2** Local log file (rotating, `loguru`, 10 MB × 5 files) — `logs/signal_copier.log`. Mirror every DM at INFO level with same payload (text only — no formatting).
@@ -330,8 +330,9 @@ signal_copier/
 │       │   ├── state.py          # State machine logic (no persistence here)
 │       │   └── gale.py           # Gale math (amount per stage)
 │       ├── telegram/
-│       │   ├── client.py         # Telethon wrapper, StringSession mgmt
-│       │   └── listener.py       # events.NewMessage handler
+│       │   ├── client.py             # Telethon wrapper, StringSession mgmt
+│       │   ├── channel_resolver.py   # Dialog scan + title-pattern matching
+│       │   └── listener.py           # events.NewMessage handler
 │       ├── broker/
 │       │   ├── base.py           # Broker Protocol
 │       │   ├── dry_run.py        # DryRunBroker
@@ -717,7 +718,7 @@ These are features/enhancements I'd recommend considering but did not include in
 | **M2** | `domain/state.py` + `domain/gale.py` + state machine tests | State transitions tested with `pytest-asyncio`; gale math parametrized |
 | **M3** | `broker/dry_run.py` + `Broker` Protocol | Dry-run broker logs intended trades; usable for end-to-end test |
 | **M4** | `infra/db.py` + `migrations/001_initial.sql` (asyncpg pool, schema bootstrap, `StateStore` with `upsert_signal`, `record_stage`, `get_active_signals`, `update_daily_summary`) | Migrations run idempotently against a test PG (Docker); round-trip CRUD tested; `command_timeout` and connection-loss recovery tested |
-| **M5** | `telegram/client.py` + `telegram/listener.py` | Connects to Telegram, parses real channel messages, dumps to stdout (no sender-allowlist, R-14) |
+| **M5** | `telegram/client.py` + `telegram/listener.py` | Connects to Telegram via `ChannelResolver` (title-pattern matching), parses real channel messages, dumps to stdout (no sender-allowlist, R-14) |
 | **M6** | `scheduler/trigger.py` + `__main__.py` glue | On a test signal, fires a (dry-run) trade at HH:MM with ≤500ms skew |
 | **M7** | `notify/telegram_dm.py` (rich notifications per §4.7 FR-7.1) | Self-DM fires for every event in the table; desktop notifications DEFERRED to v2 |
 | **M8** | `broker/olymp.py` — wraps the **vendored** `olymptrade_ws.OlympTradeClient` (`from olymptrade_ws import OlympTradeClient`) + registers push callbacks + pair-mapping lookup (auto-discover, R-11) | Demo trade placed; result received via e:26 |
