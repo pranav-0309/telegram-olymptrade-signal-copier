@@ -213,7 +213,127 @@ async def test_start_emits_on_telegram_disconnect_on_connection_error(
 
     await client.start(notifier=notifier)
 
-    assert len(disconnect_calls) == 1, (
-        "on_telegram_disconnect must fire exactly once on ConnectionError"
-    )
+    assert (
+        len(disconnect_calls) == 1
+    ), "on_telegram_disconnect must fire exactly once on ConnectionError"
     assert len(sleeps) == 1  # one backoff sleep after the disconnect
+
+
+# --- TelegramClient.target_chat non-empty check --------------------------
+
+
+def test_init_raises_on_empty_target_chat() -> None:
+    """An empty target_chat must raise TelegramConfigError with an
+    actionable message (matches the existing api_id/api_hash/phone/session
+    validation pattern)."""
+    with pytest.raises(TelegramConfigError, match="TELEGRAM_TARGET_CHAT"):
+        TelegramClient(
+            api_id=1,
+            api_hash="abc",
+            phone="+1",
+            session_string="s",
+            target_chat="",
+        )
+
+
+def test_init_raises_helpful_message_for_empty_target_chat() -> None:
+    """Error message mentions the channel-title-pattern semantics."""
+    with pytest.raises(TelegramConfigError, match="title pattern"):
+        TelegramClient(
+            api_id=1,
+            api_hash="abc",
+            phone="+1",
+            session_string="s",
+            target_chat="",
+        )
+
+
+# --- TelegramClient.connect() no longer calls get_entity -----------------
+
+
+async def test_connect_does_not_call_get_entity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect() must not attempt to resolve the target chat — that's
+    ChannelResolver's job now."""
+    client = TelegramClient(
+        api_id=1,
+        api_hash="abc",
+        phone="+1",
+        session_string="abc",
+        target_chat="Magic Trader Signals",
+    )
+    # Mock the underlying Telethon client; get_entity would raise if called.
+    mock_telethon = MagicMock()
+    mock_telethon.get_entity = AsyncMock(
+        side_effect=RuntimeError("get_entity should not be called by connect()")
+    )
+    mock_telethon.connect = AsyncMock(return_value=True)
+    # Patch the underlying Telethon constructor + StringSession so the
+    # fake session_string "abc" doesn't blow up before we even test the
+    # behavior we care about (no get_entity call).
+    monkeypatch.setattr(
+        "signal_copier.telegram.client.StringSession",
+        lambda *args, **kwargs: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "signal_copier.telegram.client._TelethonClient",
+        lambda *args, **kwargs: mock_telethon,
+    )
+
+    await client.connect()  # should NOT raise
+
+    mock_telethon.get_entity.assert_not_called()
+
+
+# --- TelegramClient.raw_client property -----------------------------------
+
+
+def test_raw_client_property_returns_underlying() -> None:
+    """raw_client returns the underlying Telethon client (escape hatch
+    for ChannelResolver)."""
+    client = TelegramClient(
+        api_id=1,
+        api_hash="abc",
+        phone="+1",
+        session_string="abc",
+        target_chat="Magic Trader Signals",
+    )
+    fake_telethon = MagicMock()
+    client._client = fake_telethon
+
+    assert client.raw_client is fake_telethon
+
+
+def test_raw_client_raises_before_connect() -> None:
+    """raw_client raises if connect() has not been called."""
+    client = TelegramClient(
+        api_id=1,
+        api_hash="abc",
+        phone="+1",
+        session_string="abc",
+        target_chat="Magic Trader Signals",
+    )
+    with pytest.raises(RuntimeError, match="connect"):
+        _ = client.raw_client
+
+
+# --- TelegramClient.set_resolved_chat_id --------------------------------
+
+
+def test_set_resolved_chat_id_makes_target_chat_id_accessible() -> None:
+    """After set_resolved_chat_id(N), target_chat_id returns N."""
+    client = TelegramClient(
+        api_id=1,
+        api_hash="abc",
+        phone="+1",
+        session_string="abc",
+        target_chat="Magic Trader Signals",
+    )
+
+    with pytest.raises(RuntimeError, match="connect"):
+        _ = client.target_chat_id
+
+    client.set_resolved_chat_id(-1001940077808)
+
+    assert client.target_chat_id == -1001940077808

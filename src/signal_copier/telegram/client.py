@@ -67,6 +67,11 @@ class TelegramClient:
                 "TELEGRAM_SESSION_STRING is empty; run "
                 "'python -m signal_copier.telegram.auth' to generate one"
             )
+        if not target_chat:
+            raise TelegramConfigError(
+                "TELEGRAM_TARGET_CHAT is empty; set it in .env to the channel "
+                "title pattern (e.g. 'Magic Trader Signals')"
+            )
 
         self._api_id = api_id
         self._api_hash = api_hash
@@ -85,25 +90,35 @@ class TelegramClient:
             )
         return self._target_chat_id
 
+    @property
+    def raw_client(self) -> _TelethonClient:
+        """The underlying Telethon client. Escape hatch for ChannelResolver
+        so it can call get_dialogs(). All other components should use
+        TelegramClient's own API."""
+        if self._client is None:
+            raise RuntimeError(
+                "raw_client accessed before connect(); call TelegramClient.connect() first"
+            )
+        return self._client
+
+    def set_resolved_chat_id(self, chat_id: int) -> None:
+        """Externally inject the resolved chat_id (typically from
+        ChannelResolver.resolve()). Required because connect() no longer
+        resolves the chat itself."""
+        self._target_chat_id = chat_id
+
     async def connect(self) -> None:
+        """Authenticate and open the MTProto connection. Does NOT resolve
+        the target chat — that is ChannelResolver's responsibility."""
         self._client = _TelethonClient(
             StringSession(self._session_string),
             self._api_id,
             self._api_hash,
         )
         await self._client.connect()
-        try:
-            entity = await self._client.get_entity(self._target_chat)
-        except Exception as exc:
-            raise TelegramConfigError(
-                f"Cannot resolve TELEGRAM_TARGET_CHAT={self._target_chat!r}: "
-                f"{type(exc).__name__}: {exc}. Check the value in .env."
-            ) from exc
-        self._target_chat_id = entity.id
         _log.info(
-            "TelegramClient connected (target_chat=%r -> chat_id=%d)",
+            "TelegramClient connected (target_chat_pattern=%r)",
             self._target_chat,
-            self._target_chat_id,
         )
 
     def add_message_handler(
