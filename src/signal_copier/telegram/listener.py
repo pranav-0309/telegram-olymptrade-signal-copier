@@ -150,12 +150,22 @@ class Listener:
         text: str,
         source_message_id: int,
     ) -> None:
-        preview = text[:80].replace("\n", " ")
+        # Find the first non-ASCII char so future failures from invisible
+        # characters (e.g. U+200D ZWJ, U+FE0F VS16) are immediately
+        # diagnosable from the log.
+        first_non_ascii = next((c for c in text if ord(c) > 127), None)
+        char_code_hint = (
+            f" first_non_ascii={first_non_ascii!r}(U+{ord(first_non_ascii):04X})"
+            if first_non_ascii
+            else ""
+        )
+        preview = text[:200].replace("\n", " ")
         self._parse_failures_logger.warning(
-            "parse_failure: reason=%s message_id=%s preview=%r",
+            "parse_failure: reason=%s message_id=%s preview=%r%s",
             failure.reason.value,
             source_message_id,
             preview,
+            char_code_hint,
         )
 
     def _log_out_of_window(

@@ -72,6 +72,15 @@ _HEADER_RE: Final[re.Pattern[str]] = re.compile(
     re.MULTILINE,
 )
 
+# Strip zero-width characters before regex matching. Some Telegram
+# clients / signal-generation tools inject these after emojis; they're
+# invisible in render but break our ^...$ anchored signal-line regex.
+# Production reference: 2026-06-26 20:38:29 UTC signal was rejected
+# as "missing_signal_line" because of an invisible character.
+_ZERO_WIDTH_RE: Final[re.Pattern[str]] = re.compile(
+    r"[\u200b\u200c\u200d\u2060\ufeff\ufe0e\ufe0f]"
+)
+
 # Signal line pattern. Tolerances documented in the planner notes:
 #   - whitespace around the `;` separators (analyst uses both `;` and ` ; `)
 #   - whitespace between the direction word and the direction emoji
@@ -113,6 +122,11 @@ def parse_signal(
     allowed_expirations: frozenset[int],
 ) -> ParseResult:
     text = raw_text.strip(_BOM)  # tolerate leading or trailing UTF-8 BOM
+    # Strip zero-width characters that break the ^...$ anchor on the
+    # signal line. Some clients/tools inject these after the direction
+    # emoji. They are invisible in render and have no semantic meaning
+    # in a signal line.
+    text = _ZERO_WIDTH_RE.sub("", text)
 
     # 1. Find and validate the expiration header line
     header_match = _HEADER_RE.search(text)

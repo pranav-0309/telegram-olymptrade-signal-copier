@@ -1,6 +1,9 @@
 FROM python:3.13
 
-# Cache bust: 2026-06-26 force rebuild for e:1054 fix
+# Cache-bust 2026-06-27 00:30: force fresh rebuild to pick up
+# invisible-character parser fix (zero-width strip + force regen).
+# Without this comment change, Railway's build cache may serve a
+# stale image that lacks the fix.
 WORKDIR /app
 
 # Install uv

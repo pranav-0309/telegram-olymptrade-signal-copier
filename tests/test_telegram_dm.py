@@ -493,9 +493,9 @@ async def test_parse_failure() -> None:
     notifier = _notifier_for(fake)
     raw = "random text that doesn't match the signal regex" + "x" * 100
     await notifier.on_parse_failure(raw_text=raw, reason=FailureReason.MISSING_SIGNAL_LINE)
-    # Preview is the first 80 chars.
+    # Preview is the first 200 chars.
     assert fake.sent[0] == (
-        f"⚠️ Skipped message (not a valid signal)\nReason: missing_signal_line\nPreview: {raw[:80]}"
+        f"⚠️ Skipped message (not a valid signal)\nReason: missing_signal_line\nPreview: {raw[:200]}"
     )
 
 

@@ -161,6 +161,54 @@ def test_message_with_leading_blank_lines_parses() -> None:
     assert result.pair == "EUR/JPY"
 
 
+# --- Invisible-character defense (new) ----------------------------------
+# Some Telegram clients / signal-generation tools inject invisible Unicode
+# characters after emojis (ZWJ U+200D, VS16 U+FE0F, ZWSP U+200B, word
+# joiner U+2060). These are invisible in render but break our ^...$
+# anchored regex because the extra character makes the line not end with
+# the expected character class.
+#
+# Production reference: 2026-06-26 20:38:29 UTC failure where the
+# exact same signal text was rejected as "missing_signal_line".
+
+
+def test_signal_with_zwj_after_emoji_parses() -> None:
+    """U+200D (ZWJ) after the direction emoji — invisible in render,
+    breaks the $ anchor."""
+    msg = "💰5-minute expiration\nUSD/IDR; 17:40; PUT 🟥\u200d\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+    assert result.direction == "down"
+
+
+def test_signal_with_vs16_after_emoji_parses() -> None:
+    """U+FE0F (Variation Selector-16) after the emoji — added by some
+    clients to request emoji presentation. Highest-likelihood production
+    culprit per investigation 2026-06-27."""
+    msg = "💰5-minute expiration\nUSD/IDR; 17:40; PUT 🟥\ufe0f\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+    assert result.direction == "down"
+
+
+def test_signal_with_zwsp_after_emoji_parses() -> None:
+    """U+200B (ZWSP) after the emoji — invisible in render."""
+    msg = "💰5-minute expiration\nUSD/IDR; 17:40; PUT 🟥\u200b\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+
+
+def test_signal_with_word_joiner_after_emoji_parses() -> None:
+    """U+2060 (Word Joiner) after the emoji — invisible in render."""
+    msg = "💰5-minute expiration\nUSD/IDR; 17:40; PUT 🟥\u2060\n"
+    result = parse_signal(msg, allowed_expirations=ALLOWED)
+    assert isinstance(result, ParsedSignal)
+    assert result.pair == "USD/IDR"
+
+
 def test_message_with_trailing_blank_lines_parses() -> None:
     msg = "💰5-minute expiration\nEUR/JPY;10:20;PUT🟥\n\n\n"
     result = parse_signal(msg, allowed_expirations=ALLOWED)

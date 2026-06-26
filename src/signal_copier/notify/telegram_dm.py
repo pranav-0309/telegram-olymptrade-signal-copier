@@ -43,7 +43,7 @@ class TelegramDMNotifier:
             await self._tg.send_to_self(text)
         except Exception as exc:
             _loguru_logger.bind(dm_event=True).warning(
-                "DM send failed: text_preview={!r} exc={}", text[:80], exc
+                "DM send failed: text_preview={!r} exc={}", text[:200], exc
             )
             return
         _loguru_logger.bind(dm_event=True).info(text)
@@ -295,7 +295,7 @@ class TelegramDMNotifier:
         text = (
             f"⚠️ Skipped message (not a valid signal)\n"
             f"Reason: {reason.value}\n"
-            f"Preview: {raw_text[:80]}"
+            f"Preview: {raw_text[:200]}"
         )
         # fmt: on
         await self._send(text)
