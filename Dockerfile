@@ -1,9 +1,9 @@
 FROM python:3.13
 
-# Cache-bust 2026-06-27 00:30: force fresh rebuild to pick up
-# invisible-character parser fix (zero-width strip + force regen).
-# Without this comment change, Railway's build cache may serve a
-# stale image that lacks the fix.
+# Cache-bust 2026-06-28 00:25: force fresh rebuild for pair_unavailable
+# translation (PairUnavailableError → UnsupportedPairError). Without this,
+# Railway may serve a stale image that still raises BrokerAuthError on
+# weekend forex signals.
 WORKDIR /app
 
 # Install uv

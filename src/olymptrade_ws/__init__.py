@@ -1,15 +1,16 @@
 # olymptrade_ws/__init__.py
 # Expose main classes for easy import
-from .main import OlympTradeClient
-from .core.client import OlympTradeClient as CoreOlympTradeClient
 from .api.balance import BalanceAPI
 from .api.market import MarketAPI
-from .api.trade import TradeAPI
+from .api.trade import PairUnavailableError, TradeAPI
+from .core.client import OlympTradeClient as CoreOlympTradeClient
+from .main import OlympTradeClient
 
 __all__ = [
     "OlympTradeClient",
     "CoreOlympTradeClient",
     "BalanceAPI",
     "MarketAPI",
-    "TradeAPI"
+    "TradeAPI",
+    "PairUnavailableError",
 ]

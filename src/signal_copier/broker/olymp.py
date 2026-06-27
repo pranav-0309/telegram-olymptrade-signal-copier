@@ -26,7 +26,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Literal, cast
 
-from olymptrade_ws import OlympTradeClient
+from olymptrade_ws import OlympTradeClient, PairUnavailableError
 from olymptrade_ws.olympconfig import parameters
 from signal_copier.broker.base import (
     BrokerAuthError,
@@ -446,15 +446,25 @@ class OlympTradeBroker:
         broker_pair, category = self._assets[key]
         client = self._client
 
-        response = await client.trade.place_order(
-            pair=broker_pair,
-            amount=float(amount),
-            direction=signal.direction,
-            duration=signal.expiration_seconds,
-            account_id=int(self._account_id),
-            group=cast(Literal["real", "demo"], self._account_group),
-            category=category,
-        )
+        try:
+            response = await client.trade.place_order(
+                pair=broker_pair,
+                amount=float(amount),
+                direction=signal.direction,
+                duration=signal.expiration_seconds,
+                account_id=int(self._account_id),
+                group=cast(Literal["real", "demo"], self._account_group),
+                category=category,
+            )
+        except PairUnavailableError as exc:
+            # Broker rejected the pair (e.g., forex outside trading hours,
+            # demo account doesn't have this asset). Translate to the
+            # supervisor's pair-rejection vocabulary so it logs a warning and
+            # produces a state-machine error event instead of crashing.
+            raise UnsupportedPairError(
+                f"broker says {broker_pair!r} unavailable: {exc.message} "
+                f"(code={exc.code})"
+            ) from exc
 
         if response is None:
             raise BrokerAuthError("place_order returned None (token rejected?)")

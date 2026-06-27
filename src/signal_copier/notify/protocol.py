@@ -114,6 +114,11 @@ class Notifier(Protocol):
         """FR-7.1 row 'Parse failure'. Fires from the M5 Listener when a
         message doesn't match the signal regex."""
 
+    async def on_pair_unavailable(self, pair: str, message: str) -> None:
+        """FR-7.1 row 'Pair unavailable'. Fires from M9 supervisor when the
+        broker rejects a trade with code `pair_unavailable` (e.g., forex
+        outside trading hours). Soft failure: signal is skipped, no crash."""
+
     async def on_telegram_disconnect(self) -> None:
         """FR-7.1 row 'Telegram disconnect'. Fires from the M5 TelegramClient
         wrapper on ConnectionError before reconnect."""
@@ -293,6 +298,13 @@ class NoOpNotifier:
             "notify: event=parse_failure reason=%s preview=%r",
             reason.value,
             raw_text[:80],
+        )
+
+    async def on_pair_unavailable(self, pair: str, message: str) -> None:
+        _log.info(
+            "notify: event=pair_unavailable pair=%s message=%s",
+            pair,
+            message,
         )
 
     async def on_telegram_disconnect(self) -> None:

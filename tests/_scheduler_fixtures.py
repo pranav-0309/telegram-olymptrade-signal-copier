@@ -221,6 +221,9 @@ class RecordingNotifier(Notifier):
             reason=reason,
         )
 
+    async def on_pair_unavailable(self, pair: str, message: str) -> None:
+        await self._record("on_pair_unavailable", pair=pair, message=message)
+
     async def on_telegram_disconnect(self) -> None:
         await self._record("on_telegram_disconnect")
 

@@ -300,6 +300,22 @@ class TelegramDMNotifier:
         # fmt: on
         await self._send(text)
 
+    async def on_pair_unavailable(self, pair: str, message: str) -> None:
+        """Broker refused a trade because the pair is untradeable right now
+        (e.g., forex outside trading hours, demo account lacks this asset).
+        Notify the user but don't crash — the supervisor has already logged
+        the warning and skipped the signal.
+        """
+        # fmt: off
+        text = (
+            f"⏭️ Skipped signal\n"
+            f"Pair: {pair}\n"
+            f"Reason: {message}\n"
+            f"Will retry on next tradeable signal."
+        )
+        # fmt: on
+        await self._send(text)
+
     async def on_telegram_disconnect(self) -> None:
         await self._send("🔌 Telegram disconnected. Reconnecting…")
 

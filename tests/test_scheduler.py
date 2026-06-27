@@ -635,6 +635,12 @@ async def test_supervisor_unsupported_pair_error() -> None:
     error_updates = [u for u in state_store.state_updates if u["new_state"] == "error"]
     assert len(error_updates) == 1
     assert error_updates[0]["error_reason"] == "broker_unavailable"
+    # FR-7.1: user is notified via on_pair_unavailable DM.
+    pair_unavail_calls = [
+        c for m, c in notifier.calls if m == "on_pair_unavailable"
+    ]
+    assert len(pair_unavail_calls) == 1
+    assert pair_unavail_calls[0]["pair"] == signal.pair
     # Notification: on_cascade_complete with final_state='error'.
     complete_calls = [c for m, c in notifier.calls if m == "on_cascade_complete"]
     assert len(complete_calls) == 1

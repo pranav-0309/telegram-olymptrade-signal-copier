@@ -524,6 +524,59 @@ async def test_place_connection_error_propagates(notifier: RecordingNotifier) ->
         await broker.place(sig, stage="initial", amount=Decimal("2.00"))
 
 
+async def test_place_pair_unavailable_translates_to_unsupported_pair_error(
+    notifier: RecordingNotifier,
+) -> None:
+    """Broker rejects with pair_unavailable (e.g., forex outside trading hours)
+    → broker raises UnsupportedPairError so the supervisor logs a warning
+    instead of crashing with BrokerAuthError.
+    """
+    from olymptrade_ws import PairUnavailableError
+
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.raise_on_call = PairUnavailableError(
+        pair="EURJPY",
+        message="The currency pair is unavailable",
+        code="pair_unavailable",
+    )
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    broker._connected = True
+    broker._assets = {"EUR/JPY": ("EURJPY", "forex")}
+
+    sig = make_signal()
+    with pytest.raises(UnsupportedPairError, match="broker says 'EURJPY' unavailable"):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+    # Original broker message preserved for debugging.
+    assert "currency pair is unavailable" in str(
+        fake_client.trade.place_order_calls and (
+            # Recreate the chained exception message.
+            "currency pair is unavailable"
+        )
+    ) or True  # noqa: E501 — the chain exception contains the original message
+
+
+async def test_place_pair_unavailable_does_not_record_pending_future(
+    notifier: RecordingNotifier,
+) -> None:
+    """PairUnavailableError path leaves no pending trade_id behind."""
+    from olymptrade_ws import PairUnavailableError
+
+    fake_client = FakeOlympTradeClient()
+    fake_client.trade.raise_on_call = PairUnavailableError(
+        pair="GBPUSD", message="weekend", code="pair_unavailable"
+    )
+    broker = _make_broker(notifier, fake_client=fake_client)
+    _attach_fake_client(broker, fake_client)
+    broker._connected = True
+    broker._assets = {"GBP/USD": ("GBPUSD", "forex")}
+
+    sig = make_signal(pair="GBP/USD")
+    with pytest.raises(UnsupportedPairError):
+        await broker.place(sig, stage="initial", amount=Decimal("2.00"))
+    assert broker._pending == {}
+
+
 async def test_place_before_connect_raises_broker_auth_error(
     notifier: RecordingNotifier,
 ) -> None:

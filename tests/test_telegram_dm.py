@@ -499,6 +499,24 @@ async def test_parse_failure() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_pair_unavailable() -> None:
+    """Broker rejected the pair (e.g., forex weekend) → user gets a DM
+    explaining the skip. Soft failure, no crash."""
+    fake = FakeTgClient()
+    notifier = _notifier_for(fake)
+    await notifier.on_pair_unavailable(
+        pair="GBP/USD",
+        message="broker says 'GBPUSD' unavailable: The currency pair is unavailable (code=pair_unavailable)",
+    )
+    assert len(fake.sent) == 1
+    text = fake.sent[0]
+    assert "Pair: GBP/USD" in text
+    assert "Reason: broker says" in text
+    assert "pair_unavailable" in text
+    assert "Skipped signal" in text
+
+
 # --- M10 reconnect-lifecycle notifications -------------------------------
 
 

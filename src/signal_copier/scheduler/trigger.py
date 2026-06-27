@@ -456,6 +456,11 @@ class SignalSupervisor:
                     self._signal.pair,
                     exc,
                 )
+                # FR-7.1: notify the user (DM) so they know the signal was
+                # skipped (e.g., forex outside trading hours on weekends).
+                await self._notifier.on_pair_unavailable(
+                    self._signal.pair, str(exc)
+                )
                 # D-4: translate broker exception into state machine's
                 # vocabulary (ResultEvent("error")). No trade_id exists.
                 await self._apply_error_transition(

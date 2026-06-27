@@ -11,6 +11,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class PairUnavailableError(Exception):
+    """Broker rejected the order because the currency pair is currently
+    untradeable (e.g., forex outside trading hours, or the demo account
+    doesn't have this asset).
+
+    The vendored library returns `None` for ALL broker errors; this typed
+    exception lets the caller distinguish a soft "skip this signal" case
+    from a real authentication / network failure.
+    """
+
+    def __init__(self, pair: str, message: str, code: str = "pair_unavailable") -> None:
+        super().__init__(f"{pair!r}: {message} (code={code})")
+        self.pair = pair
+        self.code = code
+        self.message = message
+
+
 class TradeAPI:
     def __init__(self, client: 'OlympTradeClient'):
         self._client = client
@@ -153,13 +171,26 @@ class TradeAPI:
                     trade_id = initial_status.get("id")
                     logger.info(f"Order placed successfully (ID: {trade_id}). Initial status: {initial_status.get('status')}")
                     return initial_status
-                else:
-                    logger.error(f"Unexpected data format in place order response: {trade_details}")
+                # Empty `d` with an `err` array = broker rejection (e.g., pair_unavailable)
+                err_field = response.get("err")
+                if isinstance(err_field, list) and err_field:
+                    code = err_field[0].get("code", "unknown") if isinstance(err_field[0], dict) else "unknown"
+                    message = err_field[0].get("mess", "") if isinstance(err_field[0], dict) else str(err_field[0])
+                    if code == "pair_unavailable":
+                        logger.warning(
+                            "place_order: pair_unavailable pair=%s message=%s",
+                            pair, message,
+                        )
+                        raise PairUnavailableError(pair, message, code)
+                    logger.error("place_order: broker error: %s", err_field)
                     return None
-            else:
-                error_msg = response.get("d") if response else "No response"
-                logger.error(f"Failed to place order. Response: {error_msg}")
+                logger.error("Unexpected data format in place order response: %s", trade_details)
                 return None
+            error_msg = response.get("d") if response else "No response"
+            logger.error(f"Failed to place order. Response: {error_msg}")
+            return None
+        except PairUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Exception placing order: {e}")
             return None
