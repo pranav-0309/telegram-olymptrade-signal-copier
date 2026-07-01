@@ -62,7 +62,9 @@ async def test_with_retry_retries_on_broker_auth_error_then_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_with_retry_exhausts_then_raises_broker_auth_error(monkeypatch) -> None:
+async def test_with_retry_exhausts_then_raises_broker_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Five consecutive failures → BrokerAuthError + on_exhausted called once."""
     # Skip real backoff sleeps so the test runs in ms, not 15+ seconds.
     sleep_mock = AsyncMock()
@@ -84,7 +86,9 @@ async def test_with_retry_exhausts_then_raises_broker_auth_error(monkeypatch) ->
     assert op.await_count == 5
     assert on_retry.await_count == 4
     on_exhausted.assert_awaited_once()
-    on_exhausted.assert_awaited_with(attempts=5, total_downtime_seconds=pytest.approx(0.0, abs=5.0))
+    on_exhausted.assert_awaited_with(
+        attempts=5, total_downtime_seconds=pytest.approx(0.0, abs=0.01)
+    )
 
 
 @pytest.mark.asyncio
