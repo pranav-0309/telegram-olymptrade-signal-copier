@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from signal_copier import recovery
 from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
+from signal_copier.broker.mt5 import Mt5Broker
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
@@ -47,10 +48,13 @@ async def _run(config: Config) -> int:
     try:
         # M8: validate config-style broker requirements BEFORE any I/O so a
         # missing OLYMP_ACCESS_TOKEN doesn't burn through a DB/Telegram connect.
-        if not config.dry_run and not config.olymp_access_token:
+        if not config.dry_run and (
+            config.mt5_login == 0 or not config.mt5_password or not config.mt5_server
+        ):
             sys.stderr.write(
-                "❌ DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty. "
-                "Set OLYMP_ACCESS_TOKEN in .env or set DRY_RUN=true.\n"
+                "❌ DRY_RUN=false but MT5 broker credentials are incomplete. "
+                "Set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env, "
+                "or set DRY_RUN=true.\n"
             )
             return 2
 
@@ -96,14 +100,19 @@ async def _run(config: Config) -> int:
             _log.info("Broker: DryRunBroker (DRY_RUN=true)")
             await broker.connect()
         else:
-            # MT5 broker integration is the next plan (see docs/refactor.md
-            # Section 4.3 and 4.7). Until broker/mt5.py lands, live demo
-            # trading is not implemented. Refuse with a clear error
-            # rather than silently using a stale broker reference.
-            raise NotImplementedError(
-                "Live trading requires the MT5 broker; set DRY_RUN=true "
-                "until the MT5 broker refactor (docs/refactor.md) is complete."
+            broker = Mt5Broker(
+                login=config.mt5_login,
+                password=config.mt5_password,
+                server=config.mt5_server,
+                terminal_path=config.mt5_terminal_path,
+                notifier=notifier,
             )
+            _log.info(
+                "Broker: MT5 (live demo, server=%s, login=%s)",
+                config.mt5_server,
+                config.mt5_login,
+            )
+            await broker.connect()
 
         signals_queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
         parse_failures = setup_parse_failures_log(config.log_path.parent)
@@ -225,7 +234,7 @@ def main() -> int:
         sys.stderr.write(f"❌ {exc}\n")
         return 2
     except BrokerAuthError as exc:
-        sys.stderr.write(f"❌ OlympTradeBroker failed to connect: {exc}\n")
+        sys.stderr.write(f"❌ MT5 broker failed to connect: {exc}\n")
         return 2
     except KeyboardInterrupt:
         print("\n🔴 signal_copier stopping (SIGINT)")

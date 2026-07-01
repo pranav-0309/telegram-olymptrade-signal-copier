@@ -43,19 +43,23 @@ def _stub_telegram_with_dialogs(
     fake_tg.set_resolved_chat_id = MagicMock()
 
 
-def test_main_returns_2_on_config_validation_error(
+def test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Clear all env vars so Config validation fails.
+    """M13.1: validation block at __main__.py:49-56 checks MT5 creds.
+
+    Refactor docs/refactor.md §4.7: when DRY_RUN=false, MT5_LOGIN,
+    MT5_PASSWORD, and MT5_SERVER must all be set. If any is missing,
+    main() exits with code 2 and prints an 'incomplete credentials'
+    message.
+    """
     for key in [
         "TELEGRAM_API_ID",
         "TELEGRAM_API_HASH",
         "TELEGRAM_PHONE",
         "TELEGRAM_SESSION_STRING",
         "TELEGRAM_TARGET_CHAT",
-        "OLYMP_ACCESS_TOKEN",
-        "OLYMP_ACCOUNT_ID",
-        "OLYMP_ACCOUNT_GROUP",
         "DATABASE_URL",
         "AMOUNT_INITIAL",
         "AMOUNT_GALE1",
@@ -69,14 +73,19 @@ def test_main_returns_2_on_config_validation_error(
         "LOG_PATH",
         "DRY_RUN",
         "REQUIRE_CONFIRM",
+        "MT5_LOGIN",
+        "MT5_PASSWORD",
+        "MT5_SERVER",
+        "MT5_TERMINAL_PATH",
     ]:
         monkeypatch.delenv(key, raising=False)
-    # Force a config error by setting real account + dry_run off.
-    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "real")
     monkeypatch.setenv("DRY_RUN", "false")
+    # All MT5_* unset → validation must fail before reaching the broker.
 
     rc = m5_main.main()
     assert rc == 2
+    captured = capsys.readouterr()
+    assert "MT5 broker credentials are incomplete" in captured.err
 
 
 def test_main_returns_1_on_database_connection_error(
@@ -368,28 +377,6 @@ async def test_main_picks_dry_run_broker_when_dry_run_true(
 
         # DryRunBroker was constructed
         assert MockBroker.called
-
-
-def test_main_returns_2_when_olymp_token_missing_with_dry_run_false(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """DRY_RUN=false but OLYMP_ACCESS_TOKEN empty → exit code 2."""
-    monkeypatch.setenv("TELEGRAM_API_ID", "12345")
-    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
-    monkeypatch.setenv("TELEGRAM_PHONE", "+1234567890")
-    monkeypatch.setenv("TELEGRAM_SESSION_STRING", "fake-session")
-    monkeypatch.setenv("TELEGRAM_TARGET_CHAT", "@test")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
-    monkeypatch.setenv("LOG_PATH", "/tmp/test.log")
-    monkeypatch.setenv("DRY_RUN", "false")
-    monkeypatch.setenv("OLYMP_ACCESS_TOKEN", "")
-    monkeypatch.setenv("OLYMP_ACCOUNT_GROUP", "demo")
-    monkeypatch.setenv("OLYMP_ACCOUNT_ID", "")
-
-    from signal_copier import __main__
-
-    rc = __main__.main()
-    assert rc == 2
 
 
 # --- ChannelResolver integration in __main__ -----------------------------
