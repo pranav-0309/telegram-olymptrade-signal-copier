@@ -35,6 +35,24 @@ def test_default_dry_run_is_true() -> None:
     assert _config().dry_run is True
 
 
+def test_default_timezone_is_sao_paulo() -> None:
+    assert _config().timezone == "America/Sao_Paulo"
+
+
+# --- TZ validation --------------------------------------------------------
+
+
+def test_valid_timezone_passes() -> None:
+    cfg = _config(timezone="UTC")
+    assert cfg.tz().key == "UTC"
+
+
+def test_invalid_timezone_raises() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        _config(timezone="Mars/Olympus_Mons")
+    assert "unknown timezone" in str(exc_info.value)
+
+
 def test_default_mt5_server_is_empty() -> None:
     """M13.1: empty default allows tests/.env files with no MT5_* to load.
 
