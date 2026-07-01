@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from collections.abc import Awaitable, Callable
 
@@ -32,8 +33,6 @@ def compute_backoff_seconds(
     capped = min(raw, cap)
     if jitter == 0.0:
         return capped
-    import random
-
     delta = capped * jitter * (random.random() * 2 - 1)  # noqa: S311 — not crypto
     return max(0.0, capped + delta)
 
@@ -57,7 +56,6 @@ async def with_retry(
     then raises `BrokerAuthError(f"{op_name} failed after {max_attempts} attempts")`.
     """
     downtime_start = time.monotonic()
-    delay = 0.0
     last_exc: BaseException | None = None
 
     for attempt in range(max_attempts):
