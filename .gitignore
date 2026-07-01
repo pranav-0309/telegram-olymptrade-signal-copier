@@ -51,6 +51,7 @@ data/
 # Upstream source (kept locally as a reference for re-vendoring, see
 # src/olymptrade_ws/VENDORED.md - NOT tracked in this repo)
 /OlympTradeAPI/
+/API-Quotex/
 
 # OS
 .DS_Store
