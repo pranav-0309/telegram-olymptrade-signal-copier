@@ -32,15 +32,15 @@ def test_recording_notifier_satisfies_protocol() -> None:
     expected = (
         "on_parse_failure",
         "on_telegram_disconnect",
-        "on_olymp_disconnect",
-        "on_olymp_reconnecting",
-        "on_olymp_reconnected",
-        "on_olymp_reconnect_failed",
+        "on_broker_disconnect",
+        "on_broker_reconnecting",
+        "on_broker_reconnected",
+        "on_broker_reconnect_failed",
     )
     missing = [m for m in expected if m not in vars(RecordingNotifier)]
-    assert not missing, (
-        f"RecordingNotifier no longer satisfies Notifier Protocol — missing methods: {missing}"
-    )
+    assert (
+        not missing
+    ), f"RecordingNotifier no longer satisfies Notifier Protocol — missing methods: {missing}"
 
 
 def test_recording_notifier_isinstance_protocol() -> None:

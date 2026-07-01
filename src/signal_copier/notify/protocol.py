@@ -123,12 +123,12 @@ class Notifier(Protocol):
         """FR-7.1 row 'Telegram disconnect'. Fires from the M5 TelegramClient
         wrapper on ConnectionError before reconnect."""
 
-    async def on_olymp_disconnect(self) -> None:
-        """FR-7.1 row 'OlympTrade disconnect'. Fires from M8/M10's
+    async def on_broker_disconnect(self) -> None:
+        """FR-7.1 row 'Broker disconnect'. Fires from M13+/M13.2's
         reconnect supervisor. M7 ships the method only — emission wiring
-        lands in M8 (broker) and M10 (reconnect supervisor)."""
+        lands in M13+ (broker) and M13.2 (reconnect supervisor)."""
 
-    async def on_olymp_reconnecting(
+    async def on_broker_reconnecting(
         self,
         *,
         attempt: int,
@@ -136,27 +136,27 @@ class Notifier(Protocol):
         downtime_seconds: float,
         next_delay_seconds: float,
     ) -> None:
-        """M10 reconnect lifecycle. Fires from `ReconnectingOlympTradeBroker`
+        """M13.2 reconnect lifecycle. Fires from `ReconnectingMT5Broker`
         before each backoff sleep. `downtime_seconds` is total elapsed since
         disconnect was detected; `next_delay_seconds` is the backoff before
         the next connect attempt."""
 
-    async def on_olymp_reconnected(
+    async def on_broker_reconnected(
         self,
         *,
         attempts_used: int,
         total_downtime_seconds: float,
     ) -> None:
-        """M10 reconnect lifecycle. Fires after a successful reconnect.
+        """M13.2 reconnect lifecycle. Fires after a successful reconnect.
         `attempts_used` is 1-based (1 = succeeded on first try)."""
 
-    async def on_olymp_reconnect_failed(
+    async def on_broker_reconnect_failed(
         self,
         *,
         attempts: int,
         total_downtime_seconds: float,
     ) -> None:
-        """M10 reconnect lifecycle. Fires after `reconnect_max_attempts`
+        """M13.2 reconnect lifecycle. Fires after `reconnect_max_attempts`
         consecutive failures. The supervisor then raises `BrokerAuthError`
         so `__main__` exits non-zero (Railway restart as backstop)."""
 
@@ -310,10 +310,10 @@ class NoOpNotifier:
     async def on_telegram_disconnect(self) -> None:
         _log.warning("notify: event=telegram_disconnect")
 
-    async def on_olymp_disconnect(self) -> None:
-        _log.warning("notify: event=olymp_disconnect")
+    async def on_broker_disconnect(self) -> None:
+        _log.warning("notify: event=broker_disconnect")
 
-    async def on_olymp_reconnecting(
+    async def on_broker_reconnecting(
         self,
         *,
         attempt: int,
@@ -322,33 +322,33 @@ class NoOpNotifier:
         next_delay_seconds: float,
     ) -> None:
         _log.warning(
-            "notify: event=olymp_reconnecting attempt=%d/%d downtime=%.1fs next_delay=%.1fs",
+            "notify: event=broker_reconnecting attempt=%d/%d downtime=%.1fs next_delay=%.1fs",
             attempt,
             max_attempts,
             downtime_seconds,
             next_delay_seconds,
         )
 
-    async def on_olymp_reconnected(
+    async def on_broker_reconnected(
         self,
         *,
         attempts_used: int,
         total_downtime_seconds: float,
     ) -> None:
         _log.warning(
-            "notify: event=olymp_reconnected attempts_used=%d total_downtime=%.1fs",
+            "notify: event=broker_reconnected attempts_used=%d total_downtime=%.1fs",
             attempts_used,
             total_downtime_seconds,
         )
 
-    async def on_olymp_reconnect_failed(
+    async def on_broker_reconnect_failed(
         self,
         *,
         attempts: int,
         total_downtime_seconds: float,
     ) -> None:
         _log.error(
-            "notify: event=olymp_reconnect_failed attempts=%d total_downtime=%.1fs",
+            "notify: event=broker_reconnect_failed attempts=%d total_downtime=%.1fs",
             attempts,
             total_downtime_seconds,
         )
