@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.30",           # M4: async PostgreSQL driver
     "telethon>=1.44",          # M5: Telegram MTProto user-account client
     "loguru>=0.7,<1.0",        # M7: rotating loguru sinks + DM mirror
+    "mt5linux>=1.0.0",         # M13.2: MT5 client (drop-in for MetaTrader5)
 ]
 
 [project.scripts]
