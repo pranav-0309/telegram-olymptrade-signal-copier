@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from enum import IntEnum
 from typing import Any
@@ -73,8 +74,8 @@ class _Retcode(IntEnum):
 def _resolve_symbol_name(
     input_pair: str,
     *,
-    symbol_info_fn,
-    symbols_get_fn,
+    symbol_info_fn: Callable[[str], object | None],
+    symbols_get_fn: Callable[[str], Sequence[object]],
 ) -> str | None:
     """Translate `EUR/USD` → `EURUSD-STD` (or None).
 
@@ -91,8 +92,8 @@ def _resolve_symbol_name(
         return None
     for s in matches:
         if getattr(s, "name", None) == target:
-            return s.name
-    return getattr(matches[0], "name", None)
+            return s.name  # type: ignore[attr-defined,no-any-return]
+    return getattr(matches[0], "name", None)  # noqa: B009
 
 
 # --- Mt5Broker class ---

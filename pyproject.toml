@@ -80,6 +80,15 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# mt5linux is a drop-in for MetaTrader5; no py.typed marker. The wrapper
+# at src/signal_copier/broker/mt5.py validates return shapes inline via
+# getattr() against the Mt5Broker Protocol surface.
+module = [
+    "mt5linux",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -29,11 +29,12 @@ def compute_backoff_seconds(
 
     `attempt` is 0-based. `jitter` is a fraction (0.1 = ±10%).
     """
-    raw = base * (2**attempt)
-    capped = min(raw, cap)
+    raw: float = base * (2**attempt)
+    capped: float = min(raw, cap)
     if jitter == 0.0:
         return capped
-    delta = capped * jitter * (random.random() * 2 - 1)  # noqa: S311 — not crypto
+    rng: float = random.random()  # explicit annotation: random module lacks py.typed
+    delta: float = capped * jitter * (rng * 2 - 1)  # noqa: S311 — not crypto
     return max(0.0, capped + delta)
 
 
