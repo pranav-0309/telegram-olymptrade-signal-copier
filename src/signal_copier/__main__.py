@@ -46,8 +46,8 @@ async def _run(config: Config) -> int:
     notifier: Notifier = NoOpNotifier()
     broker: Broker | None = None
     try:
-        # M8: validate config-style broker requirements BEFORE any I/O so a
-        # missing OLYMP_ACCESS_TOKEN doesn't burn through a DB/Telegram connect.
+        # M13.1: validate config-style broker requirements BEFORE any I/O so a
+        # missing MT5 broker credential doesn't burn through a DB/Telegram connect.
         if not config.dry_run and (
             config.mt5_login == 0 or not config.mt5_password or not config.mt5_server
         ):
@@ -92,9 +92,10 @@ async def _run(config: Config) -> int:
         else:
             _log.info("Notifications: NoOpNotifier (self-DM disabled)")
 
-        # M8: config-driven broker selection. DRY_RUN=true keeps the M6
-        # behavior (DryRunBroker, no I/O). DRY_RUN=false uses OlympTradeBroker
-        # wrapping the vendored olymptrade_ws client.
+        # M13.1: config-driven broker selection. DRY_RUN=true keeps the M6
+        # behavior (DryRunBroker, no I/O). DRY_RUN=false uses Mt5Broker; the
+        # class is a stub in M13.1 (lands real impl in M13.2) that raises
+        # NotImplementedError, which propagates to the except clause below.
         if config.dry_run:
             broker = DryRunBroker()
             _log.info("Broker: DryRunBroker (DRY_RUN=true)")
