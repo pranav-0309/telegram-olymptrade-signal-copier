@@ -250,3 +250,78 @@ async def test_mt5_broker_place_raises_unsupported_pair_error_on_reject(
     broker._symbol_cache["EUR/USD"] = "EURUSD-STD"
     with pytest.raises(UnsupportedPairError, match="rejected by server"):
         await broker.place(_signal(), stage="initial", amount=Decimal("2.00"))
+
+
+# -- wait_result / close_position / close (Task 7) --
+#
+# Real `mt5linux` is sync, so all MT5 calls are wrapped in
+# `asyncio.to_thread(...)` in the impl. Assertions therefore use
+# `call_count` / `assert_called_once()` (NOT `await_count` /
+# `assert_awaited_once()`).
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_wait_result_returns_win_when_position_closed_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    broker = _broker()
+    broker._last_known_profit["12345"] = Decimal("11.00")
+    fake_mt5.positions_get.return_value = []  # position gone
+
+    result = await broker.wait_result("12345", timeout=5.0)
+    assert result == "win"
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_wait_result_returns_loss_when_position_closed_negative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    broker = _broker()
+    broker._last_known_profit["12345"] = Decimal("-2.50")
+    fake_mt5.positions_get.return_value = []
+
+    result = await broker.wait_result("12345", timeout=5.0)
+    assert result == "loss"
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_wait_result_returns_timeout_on_wait_for_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    # Position remains open: positions_get always returns a list with one element
+    fake_mt5.positions_get.return_value = [SimpleNamespace(ticket=12345)]
+    broker = _broker()
+
+    # Use a tiny timeout so the wait_for fails fast
+    result = await broker.wait_result("12345", timeout=0.1)
+    assert result == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_close_position_returns_decimal_profit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.positions_get.return_value = [SimpleNamespace(profit=7.50)]
+    broker = _broker()
+
+    profit = await broker.close_position("12345", timeout=5.0)
+    assert profit == Decimal("7.50")
+    assert broker._last_known_profit["12345"] == Decimal("7.50")
+    # mt5.Close is sync; the impl wraps it in asyncio.to_thread.
+    fake_mt5.Close.assert_called_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_close_calls_mt5_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    broker = _broker()
+    await broker.close()
+    await broker.close()  # idempotent: no error on second call
+    # mt5.shutdown is sync; the impl wraps it in asyncio.to_thread.
+    assert fake_mt5.shutdown.call_count == 2  # type: ignore[attr-defined]
