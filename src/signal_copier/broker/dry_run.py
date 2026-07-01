@@ -97,5 +97,14 @@ class DryRunBroker:
             return "error"
         return await self.outcome_provider(signal, stage)
 
+    async def close_position(
+        self,
+        trade_id: str,
+        *,
+        timeout: float,  # noqa: ARG002 — dry-run ignores timeout (D-7)
+    ) -> Decimal:
+        _log.info("DRY-RUN close_position: trade_id=%s (instant, Decimal(0))", trade_id)
+        return Decimal("0")
+
     async def close(self) -> None:
         _log.info("DryRunBroker closed")

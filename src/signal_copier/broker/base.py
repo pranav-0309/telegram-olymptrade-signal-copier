@@ -85,6 +85,27 @@ class Broker(Protocol):
         expiration-grace timeout in PRD FR-5.3, which M6 owns.
         """
 
+    async def close_position(
+        self,
+        trade_id: str,
+        *,
+        timeout: float,
+    ) -> Decimal:
+        """Close an open position identified by `trade_id`, returning realized PnL.
+
+        Added in M13.1 (docs/refactor.md §4.4). Symmetric counterpart to
+        OlympTrade's built-in expiration: OlympTrade closes the position
+        itself before wait_result returns, so legacy implementations treat
+        this as a no-op returning Decimal(0). Real MT5 impl (M13.2) blocks
+        on the close-fill event, then reads `position.profit` from the
+        broker — never approximate.
+
+        Scheduler will call this in M13.5 (docs/refactor.md §4.4 step e),
+        overriding `domain/state.py:_stage_pnl` with the broker-reported
+        value. For M13.1 no caller exists; the method is added so
+        `@runtime_checkable` isinstance checks pass without AttributeError.
+        """
+
     async def close(self) -> None:
         """Tear down any connection. Idempotent. Called on shutdown and on
         unhandled broker errors so M6 can reconnect cleanly."""
