@@ -2,10 +2,10 @@
 
 Runs through:
   1. Read MT5_* env vars (after load_dotenv; no pydantic Config here)
-  2. mt5.initialize() → connect
-  3. mt5.login_info() + mt5.account_info() → snapshot
-  4. mt5.symbols_get(group="*STD*") → asset-map probe
-  5. mt5.shutdown()
+  2. MetaTrader5() + mt5_instance.initialize() → connect
+  3. mt5_instance.login_info() + mt5_instance.account_info() → snapshot
+  4. mt5_instance.symbols_get(group="*STD*") → asset-map probe
+  5. mt5_instance.shutdown()
 
 Prints PASS/FAIL summary. Exits 0 on success, 1 on any MT5 error.
 
@@ -20,50 +20,49 @@ import sys
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover — dotenv is in dev deps but not always available
+except ImportError:  # pragma: no cover
     load_dotenv = None  # type: ignore[assignment]
 
-import mt5linux as mt5
+from mt5linux import MetaTrader5
 
 SYMBOL_SUFFIX = "-STD"  # duplicated from broker/mt5.py — local config match
 
 
-def _read_required_env(key: str) -> str:
-    value = os.environ.get(key)
-    if not value:
-        return ""
-    return value
+def _read_env(key: str) -> str:
+    """Return the env var or empty string; truthiness checked by caller."""
+    return os.environ.get(key, "")
 
 
 def run_preflight() -> int:
     """Execute the preflight checks; return 0 (PASS) or 1 (FAIL)."""
     if load_dotenv is not None:
         load_dotenv()
-    login = _read_required_env("MT5_LOGIN")
-    password = _read_required_env("MT5_PASSWORD")
-    server = _read_required_env("MT5_SERVER")
+    login = _read_env("MT5_LOGIN")
+    password = _read_env("MT5_PASSWORD")
+    server = _read_env("MT5_SERVER")
     if not login or not password or not server:
         print("[FAIL] Missing MT5_* env vars. Set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env.")
         return 1
 
+    mt5_instance = MetaTrader5()
     try:
-        ok = mt5.initialize(
+        ok = mt5_instance.initialize(
             path=os.environ.get("MT5_TERMINAL_PATH"),
             server=server,
             login=int(login),
             password=password,
         )
         if not ok:
-            err = mt5.last_error()
+            err = mt5_instance.last_error()
             print(f"[FAIL] mt5.initialize → login error: {err}")
             print("       Hint: Is the MT5 terminal running with the configured server?")
             return 1
         print("[OK] mt5.initialize      → MT5 terminal reachable")
 
-        login_info = mt5.login_info()
+        login_info = mt5_instance.login_info()
         print(f"[OK] mt5.login_info      → user={login_info[0]} server={login_info[1]}")
 
-        acct = mt5.account_info()
+        acct = mt5_instance.account_info()
         if acct is None:
             print("[FAIL] mt5.account_info → returned None")
             return 1
@@ -80,11 +79,9 @@ def run_preflight() -> int:
             f"leverage=1:{leverage} currency={currency}"
         )
 
-        symbols = mt5.symbols_get(f"*{SYMBOL_SUFFIX}*")
+        symbols = mt5_instance.symbols_get(f"*{SYMBOL_SUFFIX}*")
         n = len(symbols) if symbols else 0
-        print(
-            f"[OK] mt5.symbols_get     → {n} tradeable symbols ({SYMBOL_SUFFIX.strip('-')}-named)"
-        )
+        print(f"[OK] mt5.symbols_get     → {n} tradeable symbols (STD-named)")
 
         print("PASS — preflight OK; safe to start the live bot.")
         return 0
@@ -93,7 +90,7 @@ def run_preflight() -> int:
         return 1
     finally:
         with contextlib.suppress(Exception):
-            mt5.shutdown()
+            mt5_instance.shutdown()
 
 
 if __name__ == "__main__":
