@@ -71,6 +71,9 @@ def test_preflight_exits_1_when_credentials_missing(
     monkeypatch.delenv("MT5_LOGIN", raising=False)
     monkeypatch.delenv("MT5_PASSWORD", raising=False)
     monkeypatch.delenv("MT5_SERVER", raising=False)
+    # `load_dotenv` runs *inside* run_preflight(); without this patch the test
+    # silently passes if a local .env defines any MT5_* vars.
+    monkeypatch.setattr(preflight, "load_dotenv", lambda: None)
 
     rc = preflight.run_preflight()
     assert rc == 1
