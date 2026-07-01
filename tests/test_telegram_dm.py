@@ -520,12 +520,12 @@ async def test_pair_unavailable() -> None:
     assert "Skipped signal" in text
 
 
-# --- M10 reconnect-lifecycle notifications -------------------------------
+# --- M13.2 reconnect-lifecycle notifications -----------------------------
 
 
 @pytest.mark.asyncio
 async def test_telegram_dm_on_broker_disconnect() -> None:
-    """Softened copy: M10 reconnect supervisor will attempt reconnection,
+    """Softened copy: M13.2 reconnect supervisor will attempt reconnection,
     so the disconnect message says 'Reconnecting…' (not 'Process will exit')."""
     fake = FakeTgClient()
     notifier = _notifier_for(fake)
