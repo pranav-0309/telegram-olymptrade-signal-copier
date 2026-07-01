@@ -185,7 +185,7 @@ async def test_noop_notifier_logs_telegram_disconnect_at_warning(
 async def test_noop_notifier_logs_broker_disconnect_at_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """OlympTrade disconnect is an operational anomaly — log at WARNING."""
+    """Broker disconnect is an operational anomaly — log at WARNING."""
     with caplog.at_level(logging.WARNING, logger="signal_copier.notify.protocol"):
         await NoOpNotifier().on_broker_disconnect()
     assert len(caplog.records) == 1
