@@ -1,5 +1,10 @@
 [build]
 builder = "DOCKERFILE"
+# Disable Railway auto-deploy during preflight cleanup + MT5 refactor.
+# Any future push to main whose changed files don't match `__never_match_during_refactor__/**`
+# is skipped by Railway's GitHub-source watcher. See plan:
+# docs/superpowers/plans/2026-06-30-preflight-cleanup-for-mt5-refactor.md (Task 7).
+watchPatterns = ["__never_match_during_refactor__/**"]
 
 [deploy]
 startCommand = "/app/.venv/bin/python -m signal_copier"
