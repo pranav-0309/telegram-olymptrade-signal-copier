@@ -245,23 +245,19 @@ class Mt5Broker:
 
         direction = mt5.ORDER_TYPE_BUY if signal.direction == "up" else mt5.ORDER_TYPE_SELL
 
-        def _send() -> Any:
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": broker_symbol,
-                "volume": float(lots),
-                "type": direction,
-                "magic": 0,
-                "comment": f"signal-copier:{signal.signal_id}:{stage}",
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-            result = mt5.order_send(request)
-            if result is None:
-                err = mt5.last_error()
-                raise BrokerAuthError(f"mt5.order_send returned None: {err}")
-            return result
-
-        result = await asyncio.to_thread(_send)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": broker_symbol,
+            "volume": float(lots),
+            "type": direction,
+            "magic": 0,
+            "comment": f"signal-copier:{signal.signal_id}:{stage}",
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        result = await mt5.order_send(request)
+        if result is None:
+            err = mt5.last_error()
+            raise BrokerAuthError(f"mt5.order_send returned None: {err}")
         retcode = getattr(result, "retcode", 0)
         comment = getattr(result, "comment", "")
         if retcode != _Retcode.OK:

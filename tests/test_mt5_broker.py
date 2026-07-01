@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from signal_copier.broker import Broker
-from signal_copier.broker.base import BrokerAuthError
+from signal_copier.broker.base import BrokerAuthError, UnsupportedPairError
 from signal_copier.broker.dry_run import DryRunBroker
 from signal_copier.broker.mt5 import Mt5Broker
 from signal_copier.domain.signal import Signal
@@ -100,7 +100,9 @@ def _install_fake_mt5(
             comment="OK",
             order=12345,
         )
-    fake_mt5.order_send.return_value = order_send_returns
+    # order_send is awaitable in the impl (`await mt5.order_send(...)`), so
+    # it must be an AsyncMock for tests to capture `await_args`.
+    fake_mt5.order_send = AsyncMock(return_value=order_send_returns)
 
     if last_error_returns is not None:
         fake_mt5.last_error.return_value = last_error_returns
@@ -163,3 +165,88 @@ async def test_mt5_broker_connect_retries_then_succeeds(
     await broker.connect()
     assert broker._connected is True
     assert fake_mt5.initialize.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_place_submits_market_order_with_lots_keyed_by_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.symbol_info.side_effect = lambda name: (
+        SimpleNamespace(name=name) if name == "EURUSD-STD" else None
+    )
+    broker = _broker()
+    broker._symbol_cache["EUR/USD"] = "EURUSD-STD"
+    ticket = await broker.place(_signal(direction="up"), stage="initial", amount=Decimal("2.00"))
+    assert ticket == "12345"
+    # Verify order_send was called with the right volume (0.01 for "initial")
+    request = fake_mt5.order_send.await_args.args[0]
+    assert request["volume"] == 0.01
+    assert request["symbol"] == "EURUSD-STD"
+    # Direction "up" → BUY → mt5.ORDER_TYPE_BUY which we set to 0 in _install_fake_mt5
+    assert request["type"] == 0  # mt5.ORDER_TYPE_BUY
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_place_uses_gale_lots_not_amount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `amount` Decimal arg is ignored — lots are keyed on stage."""
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.symbol_info.side_effect = lambda name: (
+        SimpleNamespace(name=name) if name == "EURUSD-STD" else None
+    )
+    broker = _broker()
+    broker._symbol_cache["EUR/USD"] = "EURUSD-STD"
+    # Pass 9999 USD as amount; LOTS_BY_STAGE['gale2'] = 0.04 wins
+    await broker.place(_signal(), stage="gale2", amount=Decimal("9999.00"))
+    request = fake_mt5.order_send.await_args.args[0]
+    assert request["volume"] == 0.04
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_place_raises_unsupported_pair_when_symbol_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mt5(monkeypatch, symbol_info_returns={}, symbols_get_returns=[])
+    broker = _broker()
+    with pytest.raises(UnsupportedPairError, match="MT5 symbol not found"):
+        await broker.place(_signal(pair="ZZZ/QQQ"), stage="initial", amount=Decimal("2.00"))
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_place_raises_broker_auth_error_on_no_money(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.symbol_info.side_effect = lambda name: (
+        SimpleNamespace(name=name) if name == "EURUSD-STD" else None
+    )
+    fake_mt5.order_send.return_value = SimpleNamespace(
+        retcode=10018,
+        comment="no money",
+        order=0,
+    )
+    broker = _broker()
+    broker._symbol_cache["EUR/USD"] = "EURUSD-STD"
+    with pytest.raises(BrokerAuthError, match="Insufficient funds"):
+        await broker.place(_signal(), stage="initial", amount=Decimal("2.00"))
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_place_raises_unsupported_pair_error_on_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.symbol_info.side_effect = lambda name: (
+        SimpleNamespace(name=name) if name == "EURUSD-STD" else None
+    )
+    fake_mt5.order_send.return_value = SimpleNamespace(
+        retcode=10006,
+        comment="rejected by server",
+        order=0,
+    )
+    broker = _broker()
+    broker._symbol_cache["EUR/USD"] = "EURUSD-STD"
+    with pytest.raises(UnsupportedPairError, match="rejected by server"):
+        await broker.place(_signal(), stage="initial", amount=Decimal("2.00"))
