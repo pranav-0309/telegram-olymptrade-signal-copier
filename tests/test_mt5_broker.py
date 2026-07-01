@@ -7,12 +7,14 @@ MetaTrader 5 terminal is required to run these.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from signal_copier.broker import Broker
+from signal_copier.broker.base import BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
 from signal_copier.broker.mt5 import Mt5Broker
 from signal_copier.domain.signal import Signal
@@ -115,3 +117,49 @@ def _install_fake_mt5(
 
     monkeypatch.setattr("signal_copier.broker.mt5.mt5", fake_mt5)
     return fake_mt5
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_connect_succeeds_with_valid_init(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_mt5(monkeypatch)
+    broker = _broker()
+    await broker.connect()
+    assert broker._connected is True
+    assert broker._start_of_day_balance == Decimal("10000.00")
+    # verify symbol cache pre-population
+    assert "EUR/USD" in broker._symbol_cache
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_connect_raises_broker_auth_error_on_init_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(
+        monkeypatch,
+        initialize_returns=False,
+        init_error=(-10005, "IPC: No IPC connection"),
+    )
+    broker = _broker()
+    with pytest.raises(BrokerAuthError, match="mt5.initialize failed"):
+        await broker.connect()
+    # mt5.initialize called 5 times (max_attempts=5 default)
+    assert fake_mt5.initialize.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_mt5_broker_connect_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mt5 = _install_fake_mt5(monkeypatch)
+    fake_mt5.initialize.side_effect = [
+        False,  # attempt 1 fails
+        False,  # attempt 2 fails
+        True,  # attempt 3 succeeds
+    ]
+    fake_mt5.last_error.return_value = (-10005, "transient")
+    broker = _broker()
+    await broker.connect()
+    assert broker._connected is True
+    assert fake_mt5.initialize.call_count == 3
