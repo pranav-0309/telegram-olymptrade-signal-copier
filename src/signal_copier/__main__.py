@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from signal_copier import recovery
 from signal_copier.broker.base import Broker, BrokerAuthError
 from signal_copier.broker.dry_run import DryRunBroker
-from signal_copier.broker.reconnect import ReconnectingOlympTradeBroker
 from signal_copier.config import Config
 from signal_copier.domain.signal import Signal
 from signal_copier.infra.db import Database, DatabaseConnectionError
@@ -97,18 +96,14 @@ async def _run(config: Config) -> int:
             _log.info("Broker: DryRunBroker (DRY_RUN=true)")
             await broker.connect()
         else:
-            broker = ReconnectingOlympTradeBroker(
-                access_token=config.olymp_access_token,
-                account_id=config.olymp_account_id,
-                account_group=config.olymp_account_group,
-                notifier=notifier,
+            # MT5 broker integration is the next plan (see docs/refactor.md
+            # Section 4.3 and 4.7). Until broker/mt5.py lands, live demo
+            # trading is not implemented. Refuse with a clear error
+            # rather than silently using a stale broker reference.
+            raise NotImplementedError(
+                "Live trading requires the MT5 broker; set DRY_RUN=true "
+                "until the MT5 broker refactor (docs/refactor.md) is complete."
             )
-            _log.info(
-                "Broker: ReconnectingOlympTradeBroker (live %s, account_id=%s)",
-                config.olymp_account_group,
-                config.olymp_account_id,
-            )
-            await broker.connect()
 
         signals_queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=_SIGNALS_QUEUE_MAXSIZE)
         parse_failures = setup_parse_failures_log(config.log_path.parent)
