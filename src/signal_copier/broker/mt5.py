@@ -81,4 +81,4 @@ class Mt5Broker:
         )
 
     async def close(self) -> None:
-        raise NotImplementedError("Mt5Broker.close() lands in M13.2.")
+        raise NotImplementedError("Mt5Broker.close() lands in M13.2. Until then, set DRY_RUN=true.")

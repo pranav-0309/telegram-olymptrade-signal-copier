@@ -10,6 +10,7 @@ import pytest
 from signal_copier.broker import Broker
 from signal_copier.broker.dry_run import DryRunBroker
 from signal_copier.broker.mt5 import Mt5Broker
+from signal_copier.domain.signal import Signal
 
 
 def _broker() -> Mt5Broker:
@@ -33,33 +34,31 @@ def test_mt5_broker_satisfies_protocol() -> None:
 
 
 async def test_mt5_broker_connect_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="M13.2"):
+    with pytest.raises(NotImplementedError, match="M13\\.2"):
         await _broker().connect()
 
 
 async def test_mt5_broker_place_raises_not_implemented() -> None:
-    from signal_copier.broker.mt5 import Mt5Broker  # noqa: F401
-
-    with pytest.raises(NotImplementedError, match="M13.2"):
-        await _broker().place(  # type: ignore[arg-type]
-            signal=_make_signal(),  # type: ignore[arg-type]
-            stage="initial",  # type: ignore[arg-type]
-            amount=Decimal("0.01"),  # type: ignore[arg-type]
+    with pytest.raises(NotImplementedError, match="M13\\.2"):
+        await _broker().place(
+            signal=_make_signal(),
+            stage="initial",
+            amount=Decimal("0.01"),
         )
 
 
 async def test_mt5_broker_wait_result_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="M13.2"):
+    with pytest.raises(NotImplementedError, match="M13\\.2"):
         await _broker().wait_result("dummy-trade", timeout=5.0)
 
 
 async def test_mt5_broker_close_position_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="M13.2"):
+    with pytest.raises(NotImplementedError, match="M13\\.2"):
         await _broker().close_position("dummy-trade", timeout=5.0)
 
 
 async def test_mt5_broker_close_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="M13.2"):
+    with pytest.raises(NotImplementedError, match="M13\\.2"):
         await _broker().close()
 
 
@@ -70,10 +69,8 @@ def test_mt5_broker_init_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
     assert any("stub class" in record.message for record in caplog.records)
 
 
-def _make_signal() -> object:
+def _make_signal() -> Signal:
     """Minimal Signal stub — used only to satisfy the place() signature."""
-    from signal_copier.domain.signal import Signal
-
     return Signal(
         signal_id="test-mt5-stub",
         pair="EURUSD",
