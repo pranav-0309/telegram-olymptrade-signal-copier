@@ -27,7 +27,7 @@ class BrokerAuthError(Exception):
     works but the requested pair doesn't exist on this account).
 
     The scheduler maps both to status='error', but BrokerAuthError triggers:
-      1. notifier.on_olymp_disconnect() — only on disconnect mid-trade
+      1. notifier.on_broker_disconnect() — only on disconnect mid-trade
       2. process exit non-zero — so Railway restarts the container
 
     S-11 (M10+) will wrap BrokerAuthError in a circuit-breaker counter so a

@@ -507,7 +507,10 @@ async def test_pair_unavailable() -> None:
     notifier = _notifier_for(fake)
     await notifier.on_pair_unavailable(
         pair="GBP/USD",
-        message="broker says 'GBPUSD' unavailable: The currency pair is unavailable (code=pair_unavailable)",
+        message=(
+            "broker says 'GBPUSD' unavailable: "
+            "The currency pair is unavailable (code=pair_unavailable)"
+        ),
     )
     assert len(fake.sent) == 1
     text = fake.sent[0]
@@ -521,40 +524,40 @@ async def test_pair_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_dm_on_olymp_disconnect() -> None:
+async def test_telegram_dm_on_broker_disconnect() -> None:
     """Softened copy: M10 reconnect supervisor will attempt reconnection,
     so the disconnect message says 'Reconnecting…' (not 'Process will exit')."""
     fake = FakeTgClient()
     notifier = _notifier_for(fake)
-    await notifier.on_olymp_disconnect()
-    assert fake.sent == ["🔌 OlympTrade disconnected. Reconnecting…"]
+    await notifier.on_broker_disconnect()
+    assert fake.sent == ["🔌 Broker disconnected. Reconnecting…"]
 
 
 @pytest.mark.asyncio
-async def test_telegram_dm_on_olymp_reconnecting() -> None:
+async def test_telegram_dm_on_broker_reconnecting() -> None:
     fake = FakeTgClient()
     notifier = _notifier_for(fake)
-    await notifier.on_olymp_reconnecting(
+    await notifier.on_broker_reconnecting(
         attempt=2,
         max_attempts=5,
         downtime_seconds=3.0,
         next_delay_seconds=2.0,
     )
     assert fake.sent == [
-        "🔁 OlympTrade reconnecting (attempt 2/5)\nDowntime: 3.0s\nNext retry in 2.0s",
+        "🔁 Broker reconnecting (attempt 2/5)\nDowntime: 3.0s\nNext retry in 2.0s",
     ]
 
 
 @pytest.mark.asyncio
-async def test_telegram_dm_on_olymp_reconnected() -> None:
+async def test_telegram_dm_on_broker_reconnected() -> None:
     fake = FakeTgClient()
     notifier = _notifier_for(fake)
-    await notifier.on_olymp_reconnected(
+    await notifier.on_broker_reconnected(
         attempts_used=1,
         total_downtime_seconds=12.3,
     )
     assert fake.sent == [
-        "✅ OlympTrade reconnected\n"
+        "✅ Broker reconnected\n"
         "Attempts: 1\n"
         "Total downtime: 12.3s\n"
         "Action: resumed normal operation. "
@@ -563,15 +566,15 @@ async def test_telegram_dm_on_olymp_reconnected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_telegram_dm_on_olymp_reconnect_failed() -> None:
+async def test_telegram_dm_on_broker_reconnect_failed() -> None:
     fake = FakeTgClient()
     notifier = _notifier_for(fake)
-    await notifier.on_olymp_reconnect_failed(
+    await notifier.on_broker_reconnect_failed(
         attempts=5,
         total_downtime_seconds=67.8,
     )
     assert fake.sent == [
-        "❌ OlympTrade reconnect failed after 5 attempts\n"
+        "❌ Broker reconnect failed after 5 attempts\n"
         "Total downtime: 67.8s\n"
         "Action: process will exit; Railway supervisor will restart."
     ]

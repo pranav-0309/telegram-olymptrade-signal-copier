@@ -319,10 +319,10 @@ class TelegramDMNotifier:
     async def on_telegram_disconnect(self) -> None:
         await self._send("🔌 Telegram disconnected. Reconnecting…")
 
-    async def on_olymp_disconnect(self) -> None:
-        await self._send("🔌 OlympTrade disconnected. Reconnecting…")
+    async def on_broker_disconnect(self) -> None:
+        await self._send("🔌 Broker disconnected. Reconnecting…")
 
-    async def on_olymp_reconnecting(
+    async def on_broker_reconnecting(
         self,
         *,
         attempt: int,
@@ -331,20 +331,20 @@ class TelegramDMNotifier:
         next_delay_seconds: float,
     ) -> None:
         text = (
-            f"🔁 OlympTrade reconnecting (attempt {attempt}/{max_attempts})\n"
+            f"🔁 Broker reconnecting (attempt {attempt}/{max_attempts})\n"
             f"Downtime: {downtime_seconds:.1f}s\n"
             f"Next retry in {next_delay_seconds:.1f}s"
         )
         await self._send(text)
 
-    async def on_olymp_reconnected(
+    async def on_broker_reconnected(
         self,
         *,
         attempts_used: int,
         total_downtime_seconds: float,
     ) -> None:
         text = (
-            f"✅ OlympTrade reconnected\n"
+            f"✅ Broker reconnected\n"
             f"Attempts: {attempts_used}\n"
             f"Total downtime: {total_downtime_seconds:.1f}s\n"
             f"Action: resumed normal operation. "
@@ -352,14 +352,14 @@ class TelegramDMNotifier:
         )
         await self._send(text)
 
-    async def on_olymp_reconnect_failed(
+    async def on_broker_reconnect_failed(
         self,
         *,
         attempts: int,
         total_downtime_seconds: float,
     ) -> None:
         text = (
-            f"❌ OlympTrade reconnect failed after {attempts} attempts\n"
+            f"❌ Broker reconnect failed after {attempts} attempts\n"
             f"Total downtime: {total_downtime_seconds:.1f}s\n"
             f"Action: process will exit; Railway supervisor will restart."
         )
