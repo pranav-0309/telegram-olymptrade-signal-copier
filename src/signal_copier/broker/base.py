@@ -91,19 +91,8 @@ class Broker(Protocol):
         *,
         timeout: float,
     ) -> Decimal:
-        """Close an open position identified by `trade_id`, returning realized PnL.
-
-        Added in M13.1 (docs/refactor.md §4.4). Symmetric counterpart to
-        OlympTrade's built-in expiration: OlympTrade closes the position
-        itself before wait_result returns, so legacy implementations treat
-        this as a no-op returning Decimal(0). Real MT5 impl (M13.2) blocks
-        on the close-fill event, then reads `position.profit` from the
-        broker — never approximate.
-
-        Scheduler will call this in M13.5 (docs/refactor.md §4.4 step e),
-        overriding `domain/state.py:_stage_pnl` with the broker-reported
-        value. For M13.1 no caller exists; the method is added so
-        `@runtime_checkable` isinstance checks pass without AttributeError.
+        """Close `trade_id`, returning realized PnL. Added M13.1 — no caller yet.
+        See docs/refactor.md §4.4 for design rationale.
         """
 
     async def close(self) -> None:

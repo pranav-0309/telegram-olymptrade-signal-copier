@@ -193,12 +193,6 @@ async def test_wait_result_unknown_trade_id_returns_error(
 
 
 async def test_close_position_returns_decimal_zero() -> None:
-    """M13.1: DryRunBroker.close_position is a no-op returning Decimal(0).
-
-    Per docs/refactor.md §4.4: legacy/OlympTrade-style implementations treat
-    this as a no-op since binary options close themselves before
-    wait_result returns. Real MT5 impl (M13.2) will return position.profit.
-    """
     broker = DryRunBroker()
     result = await broker.close_position("dryrun-abc123-initial-deadbeef", timeout=5.0)
     assert result == Decimal("0")
