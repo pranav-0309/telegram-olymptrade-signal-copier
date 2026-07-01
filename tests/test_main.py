@@ -47,7 +47,7 @@ def test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """M13.1: validation block at __main__.py:49-56 checks MT5 creds.
+    """M13.1: the MT5 credential validation block in `_run` checks MT5 creds.
 
     Refactor docs/refactor.md §4.7: when DRY_RUN=false, MT5_LOGIN,
     MT5_PASSWORD, and MT5_SERVER must all be set. If any is missing,
