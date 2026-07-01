@@ -100,7 +100,8 @@ def _install_fake_mt5(
         )
     fake_mt5.order_send.return_value = order_send_returns
 
-    fake_mt5.last_error.return_value = last_error_returns or (-1, "n/a")
+    if last_error_returns is not None:
+        fake_mt5.last_error.return_value = last_error_returns
 
     # Constants used by Mt5Broker
     fake_mt5.ORDER_TYPE_BUY = 0

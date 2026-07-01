@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from decimal import Decimal
+from enum import IntEnum
 from typing import Any
 
 import mt5linux as mt5
@@ -57,7 +58,7 @@ _KNOWN_INPUT_PAIRS: tuple[str, ...] = (
 
 
 # MT5 retcodes we recognize (subset of MQL5 TRADE_RETCODE_*).
-class _Retcode:
+class _Retcode(IntEnum):
     OK = 10009
     NO_MONEY = 10018
     REQUOTE = 10004
@@ -215,7 +216,10 @@ class Mt5Broker:
             )
 
     async def close(self) -> None:
-        await asyncio.to_thread(mt5.shutdown)
+        try:
+            await asyncio.to_thread(mt5.shutdown)
+        except Exception:
+            _log.warning("mt5.shutdown raised; ignoring on teardown", exc_info=True)
         self._connected = False
 
     # -- place --
@@ -278,7 +282,12 @@ class Mt5Broker:
                 )
             raise BrokerAuthError(f"mt5.order_send failed: retcode={retcode} comment={comment}")
 
-        ticket = str(getattr(result, "order", ""))
+        ticket_value = getattr(result, "order", "")
+        if not ticket_value:
+            raise BrokerAuthError(
+                f"mt5.order_send returned OK (retcode={retcode}) but no order id: comment={comment}"
+            )
+        ticket = str(ticket_value)
         self._last_known_profit[ticket] = Decimal("0")  # overwritten on close
         return ticket
 
