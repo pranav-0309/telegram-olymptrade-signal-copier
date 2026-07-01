@@ -1,7 +1,7 @@
 [project]
 name = "signal-copier"
-version = "0.1.0"
-description = "Telegram → OlympTrade signal copier (demo only, v1)"
+version = "0.2.0"
+description = "Telegram → MT5 signal copier (demo only, v1)"
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "PolyForm Strict 1.0.0" }
@@ -12,7 +12,6 @@ dependencies = [
     "asyncpg>=0.30",           # M4: async PostgreSQL driver
     "telethon>=1.44",          # M5: Telegram MTProto user-account client
     "loguru>=0.7,<1.0",        # M7: rotating loguru sinks + DM mirror
-    "websockets>=16.0",
 ]
 
 [project.scripts]
@@ -41,7 +40,7 @@ dev-dependencies = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["src/olymptrade_ws", "OlympTradeAPI"]
+extend-exclude = ["OlympTradeAPI"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
@@ -53,7 +52,6 @@ indent-style = "space"
 [tool.mypy]
 strict = true
 python_version = "3.13"
-exclude = ["src/olymptrade_ws"]
 
 [[tool.mypy.overrides]]
 # Telethon ships without a py.typed marker, so mypy treats its imports as Any
@@ -84,7 +82,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --ignore=OlympTradeAPI -m 'not slow'"
+addopts = "-ra --strict-markers -m 'not slow'"
 markers = [
     "slow: marks tests as slow (run explicitly with 'pytest -m slow')",
 ]
