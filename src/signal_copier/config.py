@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,10 +28,11 @@ class Config(BaseSettings):
     telegram_target_chat: str = "Magic Trader Signals"
     telegram_self_dm_notifications: bool = True
 
-    # --- OlympTrade (not used by M2, declared for schema completeness) ----
-    olymp_access_token: str = ""
-    olymp_account_group: str = "demo"  # FR-6.6: must be "demo" for v1
-    olymp_account_id: str = ""
+    # --- MT5 broker (M13 — replaces OLYMP_* block; docs/refactor.md §4.6) ----
+    mt5_login: int = 0
+    mt5_password: str = ""
+    mt5_server: str = ""
+    mt5_terminal_path: str | None = None
 
     # --- Database (not used by M2, declared for schema completeness) ------
     database_url: str = "postgresql://user:pass@localhost:5432/copier"
@@ -65,22 +66,25 @@ class Config(BaseSettings):
             raise ValueError(f"unknown timezone: {v!r}") from exc
         return v
 
-    @field_validator("olymp_account_group")
+    @field_validator("mt5_server")
     @classmethod
-    def _validate_account_group(cls, v: str) -> str:
-        if v not in {"demo", "real"}:
-            raise ValueError(f"olymp_account_group must be 'demo' or 'real', got {v!r}")
-        return v
+    def _validate_demo_server(cls, v: str) -> str:
+        """FR-6.6 equivalent for MT5: refuse non-demo server.
 
-    @model_validator(mode="after")
-    def _demo_only_guardrail(self) -> Config:
-        # FR-6.6: refuse to start with real account + dry_run off.
-        if self.olymp_account_group == "real" and not self.dry_run:
+        Empty string is allowed at config-load time (the runtime guard at
+        __main__.py:49-56 catches missing MT5_* so existing tests/.env files
+        stay green through M13.1). Non-empty values must contain 'demo'
+        (case-insensitive substring) so a real-account login plus real
+        server cannot start the bot.
+        """
+        if v == "":
+            return v
+        if "demo" not in v.lower():
             raise ValueError(
-                "Refusing to start: OLYMP_ACCOUNT_GROUP=real requires DRY_RUN=true. "
-                "Real-money trading is a v2 feature, gated behind a 7-day clean demo soak test."
+                f"mt5_server must contain 'demo' (case-insensitive); got {v!r}. "
+                "Real-money trading is a v2 feature gated behind a clean demo soak test."
             )
-        return self
+        return v
 
     def tz(self) -> ZoneInfo:
         """Convenience accessor for the configured timezone."""
