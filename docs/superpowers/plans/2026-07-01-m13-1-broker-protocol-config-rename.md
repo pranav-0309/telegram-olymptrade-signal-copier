@@ -670,19 +670,9 @@ git commit -m "build: bump to 0.2.0; rewrite description for MT5; drop olymptrad
 - Modify: `src/signal_copier/__main__.py:228` (update BrokerAuthError handler wording)
 - Test: `tests/test_main.py` (add a new test for the MT5 validation message)
 
-- [ ] **Step 1: Update `tests/test_main.py`'s env-clear helper to drop OLYMP_* + add MT5_* vars to the clear list**
+- [ ] **Step 1: Rewrite `tests/test_main.py`'s config-validation test to cover MT5 validation**
 
-Locate the env-clear list in `test_main_returns_2_on_config_validation_error` (around lines 50-73 of `tests/test_main.py`). The list currently includes `"OLYMP_ACCESS_TOKEN"`, `"OLYMP_ACCOUNT_ID"`, `"OLYMP_ACCOUNT_GROUP"`. Remove those three and add:
-```python
-        "MT5_LOGIN",
-        "MT5_PASSWORD",
-        "MT5_SERVER",
-        "MT5_TERMINAL_PATH",
-```
-
-- [ ] **Step 2: Write the failing test for the new MT5 validation message**
-
-Append to `tests/test_main.py`:
+Locate the function `test_main_returns_2_on_config_validation_error` in `tests/test_main.py` (around line 46). Rename the function to `test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds` and replace its entire body with:
 
 ```python
 def test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds(
@@ -707,7 +697,7 @@ def test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds(
     ]:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("DRY_RUN", "false")
-    # MT5_LOGIN deliberately unset → validation must fail before reaching broker.
+    # All MT5_* unset → validation must fail before reaching the broker.
 
     rc = m5_main.main()
     assert rc == 2
@@ -715,16 +705,18 @@ def test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds(
     assert "MT5 broker credentials are incomplete" in captured.err
 ```
 
-- [ ] **Step 3: Run the new test, verify it fails**
+If any sibling tests in `tests/test_main.py` reference `OLYMP_*` env vars, delete them too — they're now testing obsolete behavior.
+
+- [ ] **Step 2: Run the rewritten test, verify it fails**
 
 Run:
 ```bash
 uv run pytest tests/test_main.py::test_main_returns_2_on_dry_run_false_with_incomplete_mt5_creds -v
 ```
 
-Expected: `SystemExit` with code 2, but stderr output contains `"DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty"` (old message) instead of `"MT5 broker credentials are incomplete"` (new message). The assertion `assert "MT5 broker credentials are incomplete" in captured.err` fails.
+Expected: `SystemExit` with code 2 (the OLD validation block runs since __main__.py hasn't been updated yet), but stderr output contains the OLD message `"DRY_RUN=false but OLYMP_ACCESS_TOKEN is empty"` instead of the new `"MT5 broker credentials are incomplete"`. The assertion `assert "MT5 broker credentials are incomplete" in captured.err` fails.
 
-- [ ] **Step 4: Add `Mt5Broker` import to `__main__.py`**
+- [ ] **Step 3: Add `Mt5Broker` import to `__main__.py`**
 
 In `src/signal_copier/__main__.py`, after line 14 (`from signal_copier.broker.dry_run import DryRunBroker`), insert:
 
@@ -732,7 +724,7 @@ In `src/signal_copier/__main__.py`, after line 14 (`from signal_copier.broker.dr
 from signal_copier.broker.mt5 import Mt5Broker
 ```
 
-- [ ] **Step 5: Replace the validation block (lines 49-56)**
+- [ ] **Step 4: Replace the validation block (lines 49-56)**
 
 In `src/signal_copier/__main__.py`, locate the existing block at lines 49-56:
 
@@ -761,7 +753,7 @@ Replace with:
             return 2
 ```
 
-- [ ] **Step 6: Run the test from Step 2, verify it passes**
+- [ ] **Step 5: Run the rewritten test, verify it passes**
 
 Run:
 ```bash
@@ -770,7 +762,7 @@ uv run pytest tests/test_main.py::test_main_returns_2_on_dry_run_false_with_inco
 
 Expected: `1 passed`.
 
-- [ ] **Step 7: Replace the broker selection block (lines 95-111) to mirror refactor.md §4.7**
+- [ ] **Step 6: Replace the broker selection block (lines 95-111) to mirror refactor.md §4.7**
 
 In `src/signal_copier/__main__.py`, locate the existing block at lines 94-106:
 
@@ -805,6 +797,7 @@ Replace with (per refactor.md §4.7 verbatim):
                 terminal_path=config.mt5_terminal_path,
                 notifier=notifier,
             )
+```
             _log.info(
                 "Broker: MT5 (live demo, server=%s, login=%s)",
                 config.mt5_server, config.mt5_login,
@@ -814,7 +807,7 @@ Replace with (per refactor.md §4.7 verbatim):
 
 (Behavior is unchanged: with `DRY_RUN=false` + complete creds, `Mt5Broker(...)` constructs and `await broker.connect()` raises `NotImplementedError("…M13.2…")` which bubbles to the `except Exception` at line 233 → exit code 1. Externally identical to pre-M13.1.)
 
-- [ ] **Step 8: Update the `BrokerAuthError` handler wording (line 228)**
+- [ ] **Step 7: Update the `BrokerAuthError` handler wording (line 228)**
 
 In `src/signal_copier/__main__.py`, locate:
 
@@ -832,7 +825,7 @@ Replace with:
         return 2
 ```
 
-- [ ] **Step 9: Run the full test suite, verify no regression**
+- [ ] **Step 8: Run the full test suite, verify no regression**
 
 Run:
 ```bash
@@ -842,7 +835,7 @@ uv run ruff check src/signal_copier/__main__.py
 
 Expected: all green; ruff clean.
 
-- [ ] **Step 10: Manual smoke test of `DRY_RUN=true` path**
+- [ ] **Step 9: Manual smoke test of `DRY_RUN=true` path**
 
 With a fake `.env` containing only `TELEGRAM_*` (no MT5), confirm `python -m signal_copier` boots far enough to validate Config (the rest fails because Telegram creds are also missing — that's fine; we only verify Config loads without crashing on `mt5_server`).
 
@@ -852,7 +845,7 @@ DRY_RUN=true uv run python -c "from signal_copier.config import Config; c = Conf
 
 Expected output: `mt5_server= ''`
 
-- [ ] **Step 11: Manual smoke test of `DRY_RUN=false` validation path**
+- [ ] **Step 10: Manual smoke test of `DRY_RUN=false` validation path**
 
 ```bash
 DRY_RUN=false uv run python -m signal_copier 2>&1 | head -5
@@ -860,7 +853,7 @@ DRY_RUN=false uv run python -m signal_copier 2>&1 | head -5
 
 Expected: stderr contains `"DRY_RUN=false but MT5 broker credentials are incomplete"`; process exits with code 2.
 
-- [ ] **Step 12: Commit Commit 1 (broker+config+entry-point)**
+- [ ] **Step 11: Commit Commit 1 (broker+config+entry-point)**
 
 ```bash
 git add src/signal_copier/__main__.py tests/test_main.py
